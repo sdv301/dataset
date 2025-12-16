@@ -7,12 +7,16 @@
    ИЛИ
    pip install -r requirements_gui.txt
 
+   запуск streamlit run app.py
+
 2. Положите ваши файлы в папку 'data/'
 
 3. Запустите программу:
    Windows: run_analyzer.bat
    Linux/Mac: ./run_analyzer.sh
    Или: python main.py
+   https://geojson.io/#map=13.69/68.7204/173.77448/-7.2/16
+
 
 📁 ПОДДЕРЖИВАЕМЫЕ ФОРМАТЫ:
    • CSV (.csv)
