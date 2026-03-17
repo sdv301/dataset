@@ -1,4 +1,3 @@
-import streamlit as st
 from geopack.ui_components import setup_app, render_sidebar, render_main_content, render_footer
 
 def main():

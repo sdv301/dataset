@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 from datetime import datetime
-import json
 
 def format_number(num):
     """Форматировать число для отображения"""

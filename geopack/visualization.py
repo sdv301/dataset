@@ -7,13 +7,7 @@ import matplotlib.pyplot as plt
 from scipy.spatial import Voronoi, voronoi_plot_2d
 import numpy as np
 import pandas as pd
-import geopandas as gpd
-from streamlit_folium import st_folium
-from datetime import datetime
 from pathlib import Path
-import seaborn as sns
-from typing import Optional, Union, List, Dict, Any
-import json
 
 class Visualizer:
     def __init__(self, theme: str = 'plotly_white'):
@@ -116,7 +110,7 @@ class Visualizer:
     
     def create_line_plot(self, df, x_col, y_cols, color_col=None,
                         title="Линейный график", mode='lines+markers',
-                        line_shape='linear', animation_frame=None,
+                        line_shape='spline', animation_frame=None,
                         height=500, width=None, color_palette='set1'):
         """Создать многофункциональный линейный график"""
         if isinstance(y_cols, str):
@@ -186,7 +180,7 @@ class Visualizer:
         return fig
     
     def create_density_plot(self, df, columns, title="График плотности", 
-                           height=500, width=None, color_palette='set2'):
+                       height=500, width=None, color_palette='set2'):
         """Создать график плотности распределения"""
         fig = go.Figure()
         
@@ -196,9 +190,11 @@ class Visualizer:
             if col in df.columns and pd.api.types.is_numeric_dtype(df[col]):
                 data = df[col].dropna()
                 if len(data) > 1:
-                    kde = sns.kdeplot(data)
-                    x, y = kde.get_lines()[0].get_data()
-                    plt.close()  # Закрываем matplotlib figure
+                    # ИСПРАВЛЕНО: используем numpy для KDE вместо seaborn
+                    from scipy.stats import gaussian_kde
+                    kde = gaussian_kde(data)
+                    x = np.linspace(data.min(), data.max(), 100)
+                    y = kde(x)
                     
                     fig.add_trace(go.Scatter(
                         x=x, y=y,
@@ -513,22 +509,48 @@ class Visualizer:
         return fig
     
     def create_calendar_heatmap(self, df, date_col, value_col,
-                               title="Календарная тепловая карта",
-                               year=None, height=300, width=800,
-                               color_scale='thermal'):
+                           title="Календарная тепловая карта",
+                           year=None, height=300, width=800,
+                           color_scale='thermal'):
         """Создать календарную тепловую карту"""
         df = df.copy()
         df[date_col] = pd.to_datetime(df[date_col])
+        
+        if year:
+            df = df[df[date_col].dt.year == year]
+        
+        # Создаем правильную структуру данных для календаря
         df['year'] = df[date_col].dt.year
         df['month'] = df[date_col].dt.month
         df['day'] = df[date_col].dt.day
-        df['weekday'] = df[date_col].dt.weekday
-        df['week'] = df[date_col].dt.isocalendar().week
+        df['date_str'] = df[date_col].dt.strftime('%Y-%m-%d')
         
+        # Группируем по дате
+        daily_data = df.groupby('date_str')[value_col].mean().reset_index()
+        daily_data[date_col] = pd.to_datetime(daily_data['date_str'])
+        
+        # Создаем полный диапазон дат для года
         if year:
-            df = df[df['year'] == year]
+            all_dates = pd.date_range(start=f'{year}-01-01', end=f'{year}-12-31', freq='D')
+        else:
+            all_dates = pd.date_range(start=df[date_col].min(), end=df[date_col].max(), freq='D')
         
-        pivot = df.pivot_table(
+        # Создаем DataFrame со всеми датами
+        calendar_df = pd.DataFrame({'date': all_dates})
+        calendar_df['year'] = calendar_df['date'].dt.year
+        calendar_df['month'] = calendar_df['date'].dt.month
+        calendar_df['day'] = calendar_df['date'].dt.day
+        calendar_df['weekday'] = calendar_df['date'].dt.weekday
+        calendar_df['week'] = calendar_df['date'].dt.isocalendar().week
+        
+        # Объединяем с данными
+        calendar_df = calendar_df.merge(daily_data, 
+                                    left_on='date', 
+                                    right_on=date_col, 
+                                    how='left')
+        
+        # Создаем сводную таблицу
+        pivot = calendar_df.pivot_table(
             values=value_col,
             index='month',
             columns='day',
@@ -542,23 +564,30 @@ class Visualizer:
             x=pivot.columns,
             y=pivot.index,
             colorscale=colorscale,
-            text=pivot.round(2).values,
+            text=np.round(pivot.values, 2),
             texttemplate='%{text}',
             hoverongaps=False,
-            colorbar=dict(title=value_col)
+            colorbar=dict(title=value_col),
+            hovertemplate='Месяц: %{y}<br>День: %{x}<br>Значение: %{z}<extra></extra>'
         ))
         
         fig.update_layout(
             title=dict(text=title, font=dict(size=16)),
-            xaxis_title="День",
+            xaxis_title="День месяца",
             yaxis_title="Месяц",
             height=height,
             width=width,
-            template=self.theme
+            template=self.theme,
+            yaxis=dict(
+                tickmode='array',
+                tickvals=list(range(1, 13)),
+                ticktext=['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 
+                        'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
+            )
         )
         
         return fig
-    
+        
     # ==================== ГЕОПРОСТРАНСТВЕННАЯ ВИЗУАЛИЗАЦИЯ ====================
     
     def create_base_map(self, center_lat=None, center_lon=None, 
@@ -861,11 +890,15 @@ class Visualizer:
     
     # ==================== КОМБИНИРОВАННЫЕ ГРАФИКИ ====================
     
-    def create_subplots(self, plots, rows=1, cols=2, 
-                       shared_xaxes=False, shared_yaxes=False,
-                       vertical_spacing=0.1, horizontal_spacing=0.1,
-                       subplot_titles=None, height=400, width=800):
+    def create_subplots(self, plot_configs, rows=1, cols=2, 
+                   shared_xaxes=False, shared_yaxes=False,
+                   vertical_spacing=0.1, horizontal_spacing=0.1,
+                   subplot_titles=None, height=400, width=800,
+                   main_title="Комбинированный график"):
         """Создать комбинированный график с несколькими панелями"""
+        if subplot_titles is None:
+            subplot_titles = [f"График {i+1}" for i in range(len(plot_configs))]
+        
         fig = make_subplots(
             rows=rows, cols=cols,
             shared_xaxes=shared_xaxes,
@@ -875,19 +908,46 @@ class Visualizer:
             subplot_titles=subplot_titles
         )
         
-        for i, plot_func in enumerate(plots):
+        for i, config in enumerate(plot_configs):
             row = (i // cols) + 1
             col = (i % cols) + 1
             
-            subplot_fig = plot_func()
-            for trace in subplot_fig.data:
+            # Создаем график на основе конфигурации
+            plot_type = config.get('type')
+            
+            if plot_type == 'scatter':
+                trace = go.Scatter(
+                    x=config['x'],
+                    y=config['y'],
+                    mode=config.get('mode', 'markers'),
+                    name=config.get('name', f'График {i+1}'),
+                    marker=config.get('marker', {})
+                )
+                fig.add_trace(trace, row=row, col=col)
+            
+            elif plot_type == 'bar':
+                trace = go.Bar(
+                    x=config['x'],
+                    y=config['y'],
+                    name=config.get('name', f'График {i+1}')
+                )
+                fig.add_trace(trace, row=row, col=col)
+            
+            elif plot_type == 'histogram':
+                trace = go.Histogram(
+                    x=config['x'],
+                    name=config.get('name', f'График {i+1}'),
+                    nbinsx=config.get('nbins', None)
+                )
                 fig.add_trace(trace, row=row, col=col)
         
         fig.update_layout(
             height=height,
             width=width,
             template=self.theme,
-            showlegend=False
+            showlegend=True,
+            title_text=main_title,
+            title_font=dict(size=18)
         )
         
         return fig
@@ -991,7 +1051,7 @@ class Visualizer:
                     output_path.parent.mkdir(exist_ok=True, parents=True)
                     
                     if hasattr(fig, 'to_html'):
-                        html_str = fig.to_html(include_plotlyjs='cdn')
+                        html_str = fig.to_html(include_plotlyjs=True)
                         with open(output_path, 'w', encoding='utf-8') as f:
                             f.write(html_str)
                         saved_files.append(output_path)

@@ -2,11 +2,10 @@ import pandas as pd
 import numpy as np
 import re
 import os
-import sys
 from datetime import datetime
 from pathlib import Path
 import warnings
-warnings.filterwarnings('ignore')
+# warnings.filterwarnings('ignore') # Removed global warnings suppression
 
 class MultiSheetDataCleaner:
     """Очиститель данных с поддержкой многолистовых Excel файлов"""
@@ -264,7 +263,7 @@ class MultiSheetDataCleaner:
                             year_int = int(float(year_val))
                             month_int = int(float(month_val))
                             day_int = int(float(day_val))
-                        except:
+                        except Exception as e:
                             date_strings.append(None)
                             errors += 1
                             continue
@@ -323,7 +322,7 @@ class MultiSheetDataCleaner:
                     sheet_name,
                     f"Преобразована колонка даты '{date_col}' ({valid_dates} валидных)"
                 )
-            except:
+            except Exception as e:
                 pass
         
         # Проверяем также форматы типа dd.mm.yyyy в других колонках
@@ -369,14 +368,14 @@ class MultiSheetDataCleaner:
                         try:
                             pd.to_datetime(val, format=fmt, errors='raise')
                             success_count += 1
-                        except:
+                        except Exception as e:
                             pass
                     
                     if success_count >= 2:  # Если хотя бы 2 из 3 успешно
                         looks_like_date = True
                         date_format = fmt
                         break
-                except:
+                except Exception as e:
                     continue
             
             if looks_like_date and date_format:
@@ -434,7 +433,7 @@ class MultiSheetDataCleaner:
                 # Пробуем преобразовать
                 try:
                     df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-                except:
+                except Exception as e:
                     continue
             
             # Извлекаем части даты
@@ -532,7 +531,7 @@ class MultiSheetDataCleaner:
                 
                 if looks_like_date:
                     date_columns.append(col)
-            except:
+            except Exception as e:
                 pass
         
         return list(set(date_columns))  # Убираем дубликаты
@@ -567,7 +566,7 @@ class MultiSheetDataCleaner:
                     # Пробуем как число
                     try:
                         return float(value_str)
-                    except:
+                    except Exception as e:
                         pass
                     
                     # Форматы типа N56.77882594
@@ -633,7 +632,7 @@ class MultiSheetDataCleaner:
                             # Форматируем как дату
                             date_str = f"{int(y)}-{int(m):02d}-{int(d):02d}"
                             dates.append(date_str)
-                        except:
+                        except Exception as e:
                             dates.append(None)
                     else:
                         dates.append(None)
@@ -711,7 +710,7 @@ class MultiSheetDataCleaner:
                     df[col] = pd.to_datetime(df[col], errors='coerce')
                     if str(df[col].dtype) != original_dtype:
                         type_changes.append((col, original_dtype, 'datetime'))
-                except:
+                except Exception as e:
                     pass
             
             # Пробуем преобразовать в число
@@ -720,7 +719,7 @@ class MultiSheetDataCleaner:
                     df[col] = pd.to_numeric(df[col], errors='coerce')
                     if str(df[col].dtype) != original_dtype:
                         type_changes.append((col, original_dtype, str(df[col].dtype)))
-                except:
+                except Exception as e:
                     pass
             
             # Пробуем преобразовать в булевый тип
@@ -743,7 +742,7 @@ class MultiSheetDataCleaner:
                     
                     df[col] = df[col].apply(to_bool)
                     type_changes.append((col, original_dtype, 'bool'))
-                except:
+                except Exception as e:
                     pass
         
         if type_changes:
@@ -773,7 +772,7 @@ class MultiSheetDataCleaner:
         try:
             pd.to_datetime(sample, errors='raise')
             return True
-        except:
+        except Exception as e:
             return False
     
     def _is_potential_numeric_column(self, series):
@@ -786,7 +785,7 @@ class MultiSheetDataCleaner:
         try:
             pd.to_numeric(sample, errors='raise')
             return True
-        except:
+        except Exception as e:
             return False
     
     def _is_potential_boolean_column(self, series):
@@ -896,7 +895,7 @@ class MultiSheetDataCleaner:
             file_size = output_path.stat().st_size
             file_size_mb = file_size / (1024 * 1024)
             
-            print(f"\n✓ Файл успешно сохранен:")
+            print("\n✓ Файл успешно сохранен:")
             print(f"  Путь: {output_path}")
             print(f"  Размер: {file_size_mb:.2f} MB")
             print(f"  Всего листов: {len(self.sheet_data)}")
@@ -1077,7 +1076,7 @@ class MultiSheetDataCleaner:
             
             # Показываем типы данных
             if sheet_info['dtypes']:
-                print(f"  Типы данных:")
+                print("  Типы данных:")
                 for dtype, count in sheet_info['dtypes'].items():
                     print(f"    • {dtype}: {count} колонок")
         
@@ -1211,7 +1210,7 @@ def interactive_mode():
                     cleaner._merge_date_columns_simple(df, sheet_name, keep_original)
                 else:
                     print(f"\nЛист '{sheet_name}':")
-                    print(f"  Не найдены колонки для объединения даты")
+                    print("  Не найдены колонки для объединения даты")
             
             print("\n✓ Колонки даты обработаны")
             
@@ -1270,7 +1269,7 @@ def interactive_mode():
                     if open_file == 'y':
                         try:
                             os.startfile(saved_path)
-                        except:
+                        except Exception as e:
                             print("Не удалось открыть файл")
             
         elif choice == '7':
@@ -1313,7 +1312,7 @@ def interactive_mode():
                     if open_dir == 'y':
                         try:
                             os.startfile(saved_files[0].parent)
-                        except:
+                        except Exception as e:
                             pass
         
         elif choice == '8':
@@ -1353,7 +1352,7 @@ def _work_with_sheet(cleaner, sheet_name):
     df = cleaner.sheet_data[sheet_name]
     
     while True:
-        print(f"\n" + "-" * 60)
+        print("\n" + "-" * 60)
         print(f"ЛИСТ: {sheet_name}")
         print("-" * 60)
         print(f"Строк: {len(df):,}, Колонок: {len(df.columns)}")

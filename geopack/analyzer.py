@@ -1,13 +1,12 @@
+# analyzer.py - исправленная версия
 import pandas as pd
 import numpy as np
 import geopandas as gpd
 from shapely.geometry import Point
 from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
 from pathlib import Path
 import warnings
-import json
-warnings.filterwarnings('ignore')
+# warnings.filterwarnings('ignore') # Removed global warnings suppression
 
 class GeoDataAnalyzer:
     def __init__(self):
@@ -45,38 +44,266 @@ class GeoDataAnalyzer:
         
         try:
             if suffix == '.csv':
-                return pd.read_csv(file_path)
+                # Пробуем разные кодировки для CSV
+                encodings = ['utf-8-sig', 'utf-8', 'cp1251', 'latin1', 'windows-1251']
+                df = None
+                
+                for encoding in encodings:
+                    try:
+                        df = pd.read_csv(file_path, encoding=encoding)
+                        # Пробуем преобразовать заголовок если в первой строке данные
+                        if len(df.columns) == 1 and ';' in str(df.columns[0]):
+                            # Файл с разделителем ;
+                            df = pd.read_csv(file_path, encoding=encoding, sep=';')
+                        elif len(df.columns) == 1 and ',' not in str(df.iloc[0, 0]):
+                            # Возможно BOM или другие проблемы
+                            df = pd.read_csv(file_path, encoding=encoding, sep=None, engine='python')
+                        
+                        # Проверяем наличие данных
+                        if df is not None and not df.empty:
+                            # Обрабатываем специальный формат координат
+                            df = self._process_special_coordinates(df)
+                            break
+                    except Exception as e:
+                        print(f"Попытка кодировки {encoding} не удалась: {e}")
+                        continue
+                
+                if df is None or df.empty:
+                    return None
+                
+                return df
+                
             elif suffix in ['.xlsx', '.xls']:
-                return pd.read_excel(file_path)
+                # Загружаем только первый лист
+                excel_file = pd.ExcelFile(file_path)
+                sheet_names = excel_file.sheet_names
+                
+                if len(sheet_names) == 0:
+                    return None
+                
+                # Загружаем первый лист
+                df = pd.read_excel(file_path, sheet_name=sheet_names[0])
+                
+                if df is not None and not df.empty:
+                    # Обрабатываем специальный формат координат
+                    df = self._process_special_coordinates(df)
+                
+                return df
+                
             elif suffix == '.parquet':
-                return pd.read_parquet(file_path)
+                df = pd.read_parquet(file_path)
+                if df is not None and not df.empty:
+                    df = self._process_special_coordinates(df)
+                return df
+                
             elif suffix == '.json':
-                return pd.read_json(file_path)
+                df = pd.read_json(file_path)
+                if df is not None and not df.empty:
+                    df = self._process_special_coordinates(df)
+                return df
+                
             elif suffix == '.geojson':
                 gdf = gpd.read_file(file_path)
                 if 'geometry' in gdf.columns:
                     gdf['latitude'] = gdf.geometry.y
                     gdf['longitude'] = gdf.geometry.x
                 return gdf
+                
             elif suffix == '.shp':
                 gdf = gpd.read_file(file_path)
                 if 'geometry' in gdf.columns:
                     gdf['latitude'] = gdf.geometry.y
                     gdf['longitude'] = gdf.geometry.x
                 return gdf
+                
             else:
                 return None
+                
         except Exception as e:
-            import streamlit as st
-            st.error(f"Ошибка загрузки файла {file_path.name}: {e}")
+            # Возвращаем None, ошибку покажем в UI
+            print(f"Ошибка загрузки файла {file_path.name}: {e}")
             return None
+    
+    def _process_special_coordinates(self, df):
+        """Обработать специальные форматы координат в DataFrame"""
+        if df is None or df.empty:
+            return df
+        
+        df_processed = df.copy()
+        
+        # Ищем колонки с координатами
+        lat_cols = []
+        lon_cols = []
+        
+        for col in df_processed.columns:
+            col_lower = str(col).lower()
+            
+            # Ищем широту
+            if any(keyword in col_lower for keyword in ['широт', 'lat', 'latitude']):
+                lat_cols.append(col)
+            
+            # Ищем долготу
+            if any(keyword in col_lower for keyword in ['долгот', 'lon', 'longitude', 'lng']):
+                lon_cols.append(col)
+        
+        # Если нашли координаты, преобразуем их
+        if lat_cols and lon_cols:
+            lat_col = lat_cols[0]
+            lon_col = lon_cols[0]
+            
+            # Преобразуем координаты
+            df_processed[f'{lat_col}_decimal'] = df_processed[lat_col].apply(self.parse_special_coordinate)
+            df_processed[f'{lon_col}_decimal'] = df_processed[lon_col].apply(self.parse_special_coordinate)
+        
+        return df_processed
+    
+    def parse_special_coordinate(self, coord):
+        """
+        Парсит координаты из разных форматов:
+        1. N56.77882594 или E105.75483468 (ваш формат)
+        2. 56.77882594 (обычный числовой)
+        3. 56°46'44" (градусы-минуты-секунды)
+        """
+        try:
+            if pd.isna(coord):
+                return None
+            
+            # Если уже число
+            if isinstance(coord, (int, float)):
+                return float(coord)
+            
+            coord_str = str(coord).strip()
+            
+            if not coord_str:
+                return None
+            
+            # 1. Формат N56.77882594 или E105.75483468
+            if coord_str[0] in ['N', 'S', 'E', 'W', 'С', 'Ю', 'В', 'З']:
+                # Определяем направление
+                direction = coord_str[0]
+                
+                # Извлекаем числовую часть
+                # Убираем букву и возможные пробелы
+                num_part = coord_str[1:].strip()
+                
+                # Если есть запятая, это может быть объединенная координата
+                if ',' in num_part:
+                    # Например: N56.77882594,E105.75483468
+                    parts = num_part.split(',')
+                    if len(parts) == 2:
+                        # Это широта и долгота вместе
+                        # Мы в этом методе обрабатываем только одну координату
+                        # Так что берем первую часть
+                        num_part = parts[0]
+                
+                try:
+                    value = float(num_part)
+                    
+                    # Корректируем знак по направлению
+                    if direction in ['S', 's', 'Ю', 'ю']:  # Южная широта
+                        value = -abs(value)
+                    elif direction in ['W', 'w', 'З', 'з']:  # Западная долгота
+                        value = -abs(value)
+                    elif direction in ['N', 'n', 'С', 'с']:  # Северная широта
+                        value = abs(value)
+                    elif direction in ['E', 'e', 'В', 'в']:  # Восточная долгота
+                        value = abs(value)
+                    
+                    return value
+                except ValueError:
+                    return None
+            
+            # 2. Формат с разделителем, например: 56.77882594,105.75483468
+            elif ',' in coord_str:
+                parts = coord_str.split(',')
+                try:
+                    # Берем первую часть как число
+                    return float(parts[0].strip())
+                except Exception as e:
+                    return None
+            
+            # 3. Попробуем просто преобразовать в число
+            else:
+                try:
+                    return float(coord_str)
+                except Exception as e:
+                    return None
+                
+        except Exception as e:
+            print(f"Ошибка парсинга координаты '{coord}': {e}")
+            return None
+    
+    def load_excel_sheet(self, file_path, sheet_name):
+        """Загрузить конкретный лист Excel файла"""
+        try:
+            df = pd.read_excel(file_path, sheet_name=sheet_name)
+            if df is not None and not df.empty:
+                df = self._process_special_coordinates(df)
+            return df
+        except Exception as e:
+            print(f"Ошибка загрузки листа {sheet_name}: {e}")
+            return None
+    
+    def get_excel_sheets(self, file_path):
+        """Получить список листов Excel файла"""
+        try:
+            excel_file = pd.ExcelFile(file_path)
+            return excel_file.sheet_names
+        except Exception as e:
+            print(f"Ошибка чтения Excel файла {file_path}: {e}")
+            return []
     
     def create_geodataframe(self, df, lat_col=None, lon_col=None):
         """Создать GeoDataFrame из обычного DataFrame"""
+        if df is None or df.empty:
+            return None
+        
+        # Если не указаны колонки, пытаемся определить автоматически
+        if lat_col is None or lon_col is None:
+            lat_cols, lon_cols = self.detect_coordinates(df)
+            if lat_cols and lon_cols:
+                lat_col = lat_cols[0]
+                lon_col = lon_cols[0]
+            else:
+                return None
+        
         if lat_col and lon_col and lat_col in df.columns and lon_col in df.columns:
-            geometry = [Point(xy) for xy in zip(df[lon_col], df[lat_col])]
-            gdf = gpd.GeoDataFrame(df, geometry=geometry, crs="EPSG:4326")
-            return gdf
+            try:
+                # Создаем копию для преобразования
+                df_copy = df.copy()
+                
+                # Ищем преобразованные координаты
+                lat_decimal_col = f"{lat_col}_decimal"
+                lon_decimal_col = f"{lon_col}_decimal"
+                
+                # Если есть уже преобразованные координаты, используем их
+                if lat_decimal_col in df_copy.columns and lon_decimal_col in df_copy.columns:
+                    lat_data = df_copy[lat_decimal_col]
+                    lon_data = df_copy[lon_decimal_col]
+                else:
+                    # Иначе преобразуем сами
+                    lat_data = df_copy[lat_col].apply(self.parse_special_coordinate)
+                    lon_data = df_copy[lon_col].apply(self.parse_special_coordinate)
+                
+                # Удаляем строки с NaN в координатах
+                valid_coords = lat_data.notna() & lon_data.notna()
+                df_copy = df_copy[valid_coords].copy()
+                
+                if df_copy.empty:
+                    return None
+                
+                # Создаем геометрию
+                geometry = [Point(xy) for xy in zip(
+                    lon_data[valid_coords], 
+                    lat_data[valid_coords]
+                )]
+                
+                gdf = gpd.GeoDataFrame(df_copy, geometry=geometry, crs="EPSG:4326")
+                return gdf
+                
+            except Exception as e:
+                print(f"Ошибка создания GeoDataFrame: {e}")
+                return None
         elif 'geometry' in df.columns:
             return gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
         else:
@@ -84,6 +311,9 @@ class GeoDataAnalyzer:
     
     def detect_coordinates(self, df):
         """Обнаружить колонки с координатами"""
+        if df is None or df.empty:
+            return [], []
+            
         lat_cols = []
         lon_cols = []
         
@@ -124,6 +354,7 @@ class GeoDataAnalyzer:
         
         return lat_cols[:1], lon_cols[:1]
     
+    # Остальные методы остаются без изменений...
     def spatial_analysis(self, gdf):
         """Пространственный анализ геоданных"""
         if gdf is None or not isinstance(gdf, gpd.GeoDataFrame):
@@ -200,9 +431,11 @@ class GeoDataAnalyzer:
     
     def get_numeric_statistics(self, df):
         """Получить статистику по числовым колонкам"""
-        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        
         if len(numeric_cols) > 0:
             return df[numeric_cols].describe()
+        
         return pd.DataFrame()
     
     def detect_data_types(self, df):
@@ -240,26 +473,81 @@ class GeoDataAnalyzer:
         corr_df = pd.DataFrame(corr_pairs)
         return corr_df.sort_values('Корреляция', ascending=False).head(top_n)
     
-def convert_dms_to_decimal(self, coord_str):
-    """
-    Преобразовать координаты из формата N/E с градусами в десятичный формат.
-    Пример: N67.45682409 -> 67.45682409, E153.71599186 -> 153.71599186
-    """
-    try:
-        if pd.isna(coord_str):
+    def convert_dms_to_decimal(self, coord_str):
+        """Преобразовать координаты из градусов-минут-секунд в десятичные"""
+        try:
+            if pd.isna(coord_str):
+                return None
+            
+            coord_str = str(coord_str).strip()
+            
+            if not coord_str:
+                return None
+            
+            # Уже числовой формат
+            if coord_str[0] in ['N', 'S', 'E', 'W']:
+                try:
+                    value = float(coord_str[1:])
+                    if coord_str[0] in ['S', 'W']:
+                        value = -value
+                    return value
+                except ValueError:
+                    return None
+            else:
+                try:
+                    return float(coord_str)
+                except ValueError:
+                    return None
+        except Exception as e:
             return None
+    
+    def detect_date_columns(self, df):
+        """Обнаружить колонки с датами"""
+        date_cols = []
         
-        coord_str = str(coord_str).strip()
+        for col in df.columns:
+            if pd.api.types.is_datetime64_any_dtype(df[col]):
+                date_cols.append(col)
+            else:
+                col_lower = str(col).lower()
+                if any(word in col_lower for word in ['дата', 'date', 'time', 'время', 'год', 'месяц', 'день']):
+                    try:
+                        test_series = pd.to_datetime(df[col], errors='coerce', format='mixed')
+                        if test_series.notna().any():
+                            date_cols.append(col)
+                    except Exception as e:
+                        continue
         
-        # Убираем N/E/S/W и оставляем только число
-        if coord_str[0] in ['N', 'S', 'E', 'W']:
-            value = float(coord_str[1:])
-            # Для южных широт и западных долгот делаем отрицательными
-            if coord_str[0] in ['S', 'W']:
-                value = -value
-            return value
-        else:
-            # Если нет буквы, пытаемся преобразовать как число
-            return float(coord_str)
-    except Exception as e:
-        return None
+        return date_cols
+    
+    def detect_and_convert_dtypes(self, df):
+        """Автоматически определить и преобразовать типы данных"""
+        if df is None or df.empty:
+            return df
+        
+        df_clean = df.copy()
+        
+        for col in df_clean.columns:
+            if pd.api.types.is_datetime64_any_dtype(df_clean[col]):
+                continue
+                
+            col_lower = str(col).lower()
+            is_date_like = any(word in col_lower for word in ['дата', 'date', 'time', 'время', 'год', 'месяц', 'день'])
+            
+            if is_date_like or df_clean[col].dtype == 'object':
+                try:
+                    converted = pd.to_datetime(df_clean[col], errors='coerce', format='mixed')
+                    if converted.notna().sum() > len(df_clean) * 0.5:
+                        df_clean[col] = converted
+                except Exception as e:
+                    pass
+            
+            elif df_clean[col].dtype == 'object':
+                try:
+                    numeric = pd.to_numeric(df_clean[col], errors='coerce')
+                    if numeric.notna().sum() > len(df_clean) * 0.5 and 'id' not in col_lower:
+                        df_clean[col] = numeric
+                except Exception as e:
+                    pass
+        
+        return df_clean

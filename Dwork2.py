@@ -1,15 +1,14 @@
 import pandas as pd
 import numpy as np
 import os
-import sys
 import json
 from pathlib import Path
 from datetime import datetime
 import hashlib
 import chardet
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, Tuple
 import warnings
-warnings.filterwarnings('ignore')
+# warnings.filterwarnings('ignore') # Removed global warnings suppression
 
 class DataQualityChecker:
     """Класс для проверки качества данных"""
@@ -82,7 +81,7 @@ class DataQualityChecker:
         # Проверка аномальных значений в числовых колонках
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         for col in numeric_cols:
-            col_stats = df[col].describe()
+            df[col].describe()
             
             # Проверка на бесконечные значения
             if np.any(np.isinf(df[col])):
@@ -245,7 +244,7 @@ class DataQualityChecker:
                 comparison['matches'].append("DataFrame идентичны (хеш-суммы совпадают)")
             else:
                 comparison['differences'].append("DataFrame различны (хеш-суммы не совпадают)")
-        except:
+        except Exception as e:
             comparison['warnings'] = ["Не удалось вычислить хеш-суммы"]
         
         return comparison
@@ -299,7 +298,7 @@ class DataQualityChecker:
                         results['file_info']['columns'] = list(df.columns)
                         results['valid'] = True
                         break
-                    except:
+                    except Exception as e:
                         continue
                 
                 if not results['valid']:
@@ -927,7 +926,7 @@ def example_usage():
     print("=" * 70)
     
     if report['success']:
-        print(f"✓ Конвертация успешна!")
+        print("✓ Конвертация успешна!")
         print(f"  Листов: {report['sheets_processed']}")
         print(f"  Строк: {report['total_rows_converted']:,}")
         print(f"  Файлов создано: {len(report['files_created'])}")
@@ -1005,7 +1004,7 @@ def console_interface():
     print("Анализирую данные...")
     analysis = converter.analyze_excel_quality()
     
-    print(f"\n📊 Сводка по файлу:")
+    print("\n📊 Сводка по файлу:")
     print(f"   • Листов: {analysis['total_sheets']}")
     print(f"   • Всего строк: {analysis['summary']['total_rows']:,}")
     print(f"   • Всего колонок: {analysis['summary']['total_columns']:,}")
@@ -1058,7 +1057,7 @@ def console_interface():
     
     if report['success']:
         print("✅ КОНВЕРТАЦИЯ УСПЕШНО ЗАВЕРШЕНА!")
-        print(f"\n📈 Статистика:")
+        print("\n📈 Статистика:")
         print(f"   • Листов обработано: {report['sheets_processed']}")
         print(f"   • Всего строк: {report['total_rows_converted']:,}")
         print(f"   • Файлов создано: {len(report['files_created'])}")
@@ -1076,13 +1075,13 @@ def console_interface():
         print(f"\n📁 Файлы сохранены в: {os.path.abspath(output_dir)}")
         
         # Сводная информация о созданных файлах
-        print(f"\n📋 Созданные файлы:")
+        print("\n📋 Созданные файлы:")
         for file_path in report['files_created']:
             file = Path(file_path)
             size_mb = file.stat().st_size / 1024**2
             print(f"   • {file.name} ({size_mb:.2f} MB)")
         
-        print(f"\n📊 Подробные отчеты сохранены в папке с результатами")
+        print("\n📊 Подробные отчеты сохранены в папке с результатами")
         
         # Предложение проверить валидацию
         check = input("\nПроверить валидацию созданных файлов? (y/n): ").strip().lower()
