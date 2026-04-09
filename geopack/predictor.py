@@ -13,7 +13,16 @@ import warnings
 # warnings.filterwarnings('ignore') # Removed global warnings suppression
 
 class TimeSeriesPredictor:
-    """Класс для предсказаний временных рядов"""
+    """Класс для предсказаний временных рядов с гибридным подходом: климатология + XGBoost"""
+    
+    # Фиксированный набор признаков для согласованности обучения и предсказания
+    BASE_FEATURES = [
+        'month', 'dayofyear', 'dayofweek',
+        'month_sin', 'month_cos', 'day_sin', 'day_cos',
+        'year_normalized'
+    ]
+    LAG_DAYS = [1, 7, 14, 30]
+    MA_WINDOWS = [7, 14, 30]
     
     def __init__(self):
         self.models = {}
@@ -22,6 +31,8 @@ class TimeSeriesPredictor:
         self.feature_names = {}  # Сохраняем имена признаков
         self.predictions = {}
         self.feature_importance = {}
+        self.climatology = {}  # Климатологический профиль по дню года
+        self.year_range = {}  # Диапазон годов для нормализации
         self.date_formats = ['%Y-%m-%d', '%d.%m.%Y', '%d/%m/%Y', '%Y.%m.%d', '%m/%d/%Y', '%Y%m%d']
     
     def load_all_excel_sheets(self, file_path):
@@ -115,9 +126,105 @@ class TimeSeriesPredictor:
         
         return date_columns
     
+    def _build_climatology_profile(self, df, target_column, date_column):
+        """Построить климатологический профиль — среднее по дню года за все годы.
+        
+        Для каждого дня года (1-366) вычисляется:
+        - mean, median, std
+        - квантили q10, q25, q75, q90
+        - min, max, count
+        
+        Затем профиль сглаживается скользящим окном ±7 дней.
+        """
+        df_work = df.copy()
+        
+        # Очищаем аномалии перед построением профиля
+        df_work = self._handle_anomalies(df_work, target_column)
+        
+        if not pd.api.types.is_datetime64_any_dtype(df_work[date_column]):
+            df_work[date_column] = pd.to_datetime(df_work[date_column], errors='coerce', format='mixed')
+        
+        df_work = df_work.dropna(subset=[date_column, target_column])
+        
+        if df_work.empty or len(df_work) < 30:
+            return None
+        
+        df_work['_doy'] = df_work[date_column].dt.dayofyear
+        
+        # Агрегация по дню года
+        grouped = df_work.groupby('_doy')[target_column].agg(
+            ['mean', 'median', 'std', 'min', 'max', 'count',
+             lambda x: x.quantile(0.10),
+             lambda x: x.quantile(0.25),
+             lambda x: x.quantile(0.75),
+             lambda x: x.quantile(0.90)]
+        )
+        grouped.columns = ['mean', 'median', 'std', 'min', 'max', 'count', 'q10', 'q25', 'q75', 'q90']
+        
+        # Заполняем пропущенные дни года (если не все 366 дней представлены)
+        full_index = pd.RangeIndex(1, 367)
+        grouped = grouped.reindex(full_index)
+        
+        # Интерполируем пропущенные дни
+        grouped = grouped.interpolate(method='linear', limit_direction='both')
+        
+        # Сглаживаем скользящим окном (±7 дней) для устранения шума
+        smoothing_window = 15  # 7 дней до + текущий + 7 дней после
+        for col in ['mean', 'median', 'std', 'q10', 'q25', 'q75', 'q90', 'min', 'max']:
+            # Оборачиваем данные для корректного сглаживания на границах года
+            extended = pd.concat([grouped[col].iloc[-7:], grouped[col], grouped[col].iloc[:7]])
+            smoothed = extended.rolling(window=smoothing_window, center=True, min_periods=3).mean()
+            grouped[col] = smoothed.iloc[7:-7].values
+        
+        # Заполняем NaN в std нулями
+        grouped['std'] = grouped['std'].fillna(0)
+        
+        profile = grouped.to_dict('index')
+        self.climatology[target_column] = profile
+        
+        return profile
+    
+    def _get_climatology_value(self, target_column, dayofyear, field='mean'):
+        """Получить значение из климатологического профиля"""
+        profile = self.climatology.get(target_column, {})
+        doy = max(1, min(366, dayofyear))
+        day_profile = profile.get(doy, {})
+        if isinstance(day_profile, dict):
+            return day_profile.get(field, 0)
+        return 0
+    
+    def _handle_anomalies(self, df, target_column):
+        """Обработка аномалий (выбросов) в целевой переменной для предотвращения ошибок R²"""
+        df_clean = df.copy()
+        if target_column and target_column in df_clean.columns and pd.api.types.is_numeric_dtype(df_clean[target_column]):
+            # 1. Сначала убираем технические заглушки (часто -9999 или 9999)
+            df_clean.loc[df_clean[target_column] < -9000, target_column] = np.nan
+            df_clean.loc[df_clean[target_column] > 90000, target_column] = np.nan
+            
+            # 2. Вычисляем границы для типичных экстремумов
+            series = df_clean[target_column].dropna()
+            if len(series) > 10:
+                q1 = series.quantile(0.05)
+                q9 = series.quantile(0.95)
+                iqr = q9 - q1
+                
+                # Если данные не константа
+                if iqr > 1e-5:
+                    lower_bound = q1 - 2.5 * iqr
+                    upper_bound = q9 + 2.5 * iqr
+                    
+                    # Ограничиваем выбросы
+                    df_clean.loc[df_clean[target_column] < lower_bound, target_column] = lower_bound
+                    df_clean.loc[df_clean[target_column] > upper_bound, target_column] = upper_bound
+        return df_clean
+
     def prepare_time_features(self, df, date_column, target_column=None):
-        """Подготовить временные признаки"""
+        """Подготовить временные признаки с согласованным набором"""
         df_prepared = df.copy()
+        
+        # Сначала очищаем аномалии
+        if target_column:
+            df_prepared = self._handle_anomalies(df_prepared, target_column)
         
         # Преобразуем дату в pandas Timestamp
         if not pd.api.types.is_datetime64_any_dtype(df_prepared[date_column]):
@@ -130,7 +237,7 @@ class TimeSeriesPredictor:
             return df_prepared
         
         # Сортируем по дате
-        df_prepared = df_prepared.sort_values(date_column)
+        df_prepared = df_prepared.sort_values(date_column).reset_index(drop=True)
         
         # Базовые временные признаки
         df_prepared['year'] = df_prepared[date_column].dt.year
@@ -140,10 +247,18 @@ class TimeSeriesPredictor:
         df_prepared['dayofyear'] = df_prepared[date_column].dt.dayofyear
         
         # Циклические тригонометрические признаки
-        df_prepared['month_sin'] = np.sin(2 * np.pi * df_prepared[date_column].dt.month / 12)
-        df_prepared['month_cos'] = np.cos(2 * np.pi * df_prepared[date_column].dt.month / 12)
-        df_prepared['day_sin'] = np.sin(2 * np.pi * df_prepared[date_column].dt.day / 31)
-        df_prepared['day_cos'] = np.cos(2 * np.pi * df_prepared[date_column].dt.day / 31)
+        df_prepared['month_sin'] = np.sin(2 * np.pi * df_prepared['month'] / 12)
+        df_prepared['month_cos'] = np.cos(2 * np.pi * df_prepared['month'] / 12)
+        df_prepared['day_sin'] = np.sin(2 * np.pi * df_prepared['day'] / 31)
+        df_prepared['day_cos'] = np.cos(2 * np.pi * df_prepared['day'] / 31)
+        
+        # Нормализованный год (для захвата многолетних трендов)
+        year_min = df_prepared['year'].min()
+        year_max = df_prepared['year'].max()
+        if year_max > year_min:
+            df_prepared['year_normalized'] = (df_prepared['year'] - year_min) / (year_max - year_min)
+        else:
+            df_prepared['year_normalized'] = 0.5
         
         # Только если целевая переменная существует
         if target_column and target_column in df_prepared.columns:
@@ -151,78 +266,111 @@ class TimeSeriesPredictor:
             if df_prepared[target_column].isna().any():
                 df_prepared[target_column] = df_prepared[target_column].interpolate(method='linear', limit=7)
             
-            # Добавляем лаги только если достаточно данных
-            if len(df_prepared) > 30:
-                for lag in [1, 7, 30]:  # Только основные лаги
-                    lag_col = f'{target_column}_lag_{lag}'
-                    df_prepared[lag_col] = df_prepared[target_column].shift(lag)
+            # Вычисляем резидуалы (отклонение от климатологической нормы)
+            if target_column in self.climatology:
+                df_prepared['_clim_mean'] = df_prepared['dayofyear'].apply(
+                    lambda doy: self._get_climatology_value(target_column, doy, 'mean')
+                )
+                df_prepared['_residual'] = df_prepared[target_column] - df_prepared['_clim_mean']
+            else:
+                df_prepared['_residual'] = df_prepared[target_column]
             
-            # Скользящие средние только если достаточно данных
-            if len(df_prepared) > 14:
-                for window in [7, 30]:  # Только основные окна
-                    ma_col = f'{target_column}_ma_{window}'
-                    df_prepared[ma_col] = df_prepared[target_column].rolling(window=min(window, len(df_prepared)), min_periods=1).mean()
+            # Лаги на резидуалах (согласованный набор)
+            if len(df_prepared) > max(self.LAG_DAYS):
+                for lag in self.LAG_DAYS:
+                    df_prepared[f'residual_lag_{lag}'] = df_prepared['_residual'].shift(lag)
+            
+            # Скользящие средние на резидуалах
+            if len(df_prepared) > max(self.MA_WINDOWS):
+                for window in self.MA_WINDOWS:
+                    df_prepared[f'residual_ma_{window}'] = df_prepared['_residual'].rolling(
+                        window=min(window, len(df_prepared)), min_periods=1
+                    ).mean()
         
         return df_prepared
     
     def train_model(self, df, target_column, date_column, model_type='xgboost'):
-        """Обучить модель предсказания"""
+        """Обучить модель предсказания с гибридным подходом:
+        1) Построить климатологический профиль
+        2) Обучить XGBoost на резидуалах (отклонениях от климатологии)
+        """
         
         try:
-            # Подготовка данных
+            # Шаг 1: Строим климатологический профиль
+            st.info("📊 Строим климатологический профиль из исторических данных...")
+            profile = self._build_climatology_profile(df, target_column, date_column)
+            if profile is None:
+                st.warning("⚠️ Не удалось построить климатологический профиль, используем базовый режим")
+            
+            # Шаг 2: Подготовка данных (теперь с резидуалами)
             df_prepared = self.prepare_time_features(df, date_column, target_column)
             
-            if df_prepared.empty or len(df_prepared) < 30:  # Уменьшил минимальное количество
+            if df_prepared.empty or len(df_prepared) < 30:
                 raise ValueError(f"Недостаточно данных для обучения. Найдено только {len(df_prepared)} строк.")
             
-            # Убедимся, что целевая переменная существует
             if target_column not in df_prepared.columns:
                 raise ValueError(f"Целевая переменная '{target_column}' не найдена в данных")
             
-            # Заполняем только небольшие пропуски, огромные дыры зимой остаются NaN
-            if df_prepared[target_column].isna().any():
-                df_prepared[target_column] = df_prepared[target_column].interpolate(method='linear', limit=7)
+            # Сохраняем диапазон годов для нормализации при прогнозе
+            self.year_range[target_column] = {
+                'min': int(df_prepared['year'].min()),
+                'max': int(df_prepared['year'].max())
+            }
             
-            # Определяем признаки (все числовые колонки кроме даты, целевой и чистого года)
-            feature_cols = []
-            for col in df_prepared.columns:
-                if (col not in [target_column, date_column, 'source_sheet', 'year'] and 
-                    pd.api.types.is_numeric_dtype(df_prepared[col])):
+            # Шаг 3: Формируем согласованный набор признаков
+            feature_cols = [f for f in self.BASE_FEATURES if f in df_prepared.columns]
+            
+            # Добавляем лаги и MA на резидуалах
+            for lag in self.LAG_DAYS:
+                col = f'residual_lag_{lag}'
+                if col in df_prepared.columns:
+                    feature_cols.append(col)
+            for window in self.MA_WINDOWS:
+                col = f'residual_ma_{window}'
+                if col in df_prepared.columns:
                     feature_cols.append(col)
             
-            # Добавляем автоматически сгенерированные признаки
-            auto_features = [col for col in df_prepared.columns 
-                        if col.startswith(f'{target_column}_lag_') or 
-                        col.startswith(f'{target_column}_ma_')]
-            feature_cols.extend(auto_features)
+            # Также добавляем другие числовые колонки (например, температура, осадки)
+            for col in df_prepared.columns:
+                if (col not in feature_cols and
+                    col not in [target_column, date_column, 'source_sheet', 'year', 'day',
+                                '_clim_mean', '_residual'] and
+                    not col.startswith('residual_') and
+                    not col.startswith(f'{target_column}_') and
+                    pd.api.types.is_numeric_dtype(df_prepared[col]) and
+                    col not in ['year_normalized', 'month', 'dayofyear', 'dayofweek',
+                                'month_sin', 'month_cos', 'day_sin', 'day_cos']):
+                    # Добавляем только если колонка имеет достаточно данных
+                    if df_prepared[col].notna().sum() > len(df_prepared) * 0.5:
+                        feature_cols.append(col)
             
-            # Вместо удаления строк с NaN, заполняем их средними значениями
-            # Но сначала убедимся, что у нас есть хоть какие-то данные
-            if len(df_prepared) < 10:
-                raise ValueError(f"Слишком мало исходных данных: {len(df_prepared)} строк")
+            # Удаляем дубликаты
+            feature_cols = list(dict.fromkeys(feature_cols))
             
-            # Используем более простые признаки, если данных мало
-            if len(df_prepared) < 100:
-                # Для небольших наборов данных используем только базовые признаки без года
-                simple_features = [col for col in ['month', 'dayofyear', 'dayofweek', 'month_sin', 'month_cos', 'day_sin', 'day_cos'] 
-                                if col in df_prepared.columns]
-                feature_cols = simple_features
+            # Целевая переменная — резидуал (отклонение от климатологии)
+            if '_residual' in df_prepared.columns and profile is not None:
+                y = df_prepared['_residual']
+                st.info("🎯 Модель обучается на **отклонениях от исторической нормы** (резидуалах)")
+            else:
+                y = df_prepared[target_column]
+                st.info("🎯 Модель обучается на **абсолютных значениях** (климатологический профиль недоступен)")
             
             X = df_prepared[feature_cols]
-            y = df_prepared[target_column]
             
-            # Удаляем строки где целевая переменная NaN (зимние месяцы без данных)
-            valid_indices = y.notna()
+            # Удаляем строки где целевая переменная NaN
+            valid_indices = y.notna() & X.notna().all(axis=1)
             X = X[valid_indices]
             y = y[valid_indices]
             
-            if len(X) < 20:  # Уменьшил минимальное количество
+            if len(X) < 20:
                 raise ValueError(f"Слишком мало данных после очистки: {len(X)} строк")
             
             # Сохраняем имена признаков
             self.feature_names[target_column] = feature_cols.copy()
             
-            # Разделение данных (70/30 если данных мало)
+            st.info(f"📋 Используется {len(feature_cols)} признаков, {len(X)} строк данных")
+            
+            # Разделение данных
             split_ratio = 0.7 if len(X) < 50 else 0.8
             split_idx = int(len(X) * split_ratio)
             X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
@@ -231,7 +379,7 @@ class TimeSeriesPredictor:
             if len(X_train) < 10 or len(X_test) < 5:
                 raise ValueError("Недостаточно данных для обучения/тестирования")
             
-            # Заполнение пропущенных значений (на всякий случай)
+            # Заполнение пропущенных значений
             imputer = SimpleImputer(strategy='mean')
             X_train_imputed = imputer.fit_transform(X_train)
             X_test_imputed = imputer.transform(X_test)
@@ -241,32 +389,73 @@ class TimeSeriesPredictor:
             X_train_scaled = scaler.fit_transform(X_train_imputed)
             X_test_scaled = scaler.transform(X_test_imputed)
             
-            # Сохраняем преобразователи с именами признаков
             scaler.feature_names_in_ = feature_cols
             imputer.feature_names_in_ = feature_cols
             
-            # Упрощаем модель для небольших наборов данных
-            if len(X_train) < 50:
+            # Настройка модели XGBoost
+            if len(X_train) < 100:
                 model = xgb.XGBRegressor(
-                    n_estimators=50,
-                    max_depth=3,
-                    learning_rate=0.1,
+                    n_estimators=100,
+                    max_depth=4,
+                    learning_rate=0.05,
+                    subsample=0.8,
+                    colsample_bytree=0.8,
+                    min_child_weight=5,
+                    reg_alpha=0.1,
+                    reg_lambda=1.0,
                     random_state=42
                 )
             else:
                 model = xgb.XGBRegressor(
-                    n_estimators=100,
-                    max_depth=6,
-                    learning_rate=0.05,
+                    n_estimators=300,
+                    max_depth=5,
+                    learning_rate=0.03,
                     subsample=0.8,
+                    colsample_bytree=0.8,
+                    min_child_weight=5,
+                    reg_alpha=0.1,
+                    reg_lambda=1.0,
                     random_state=42
                 )
             
             # Обучение
             model.fit(X_train_scaled, y_train)
             
-            # Оценка
-            score = model.score(X_test_scaled, y_test) if len(X_test) > 0 else 0.0
+            # Оценка на резидуалах
+            residual_score = model.score(X_test_scaled, y_test) if len(X_test) > 0 else 0.0
+            
+            # Если обучались на резидуалах, пересчитаем R² для абсолютных значений
+            if '_residual' in df_prepared.columns and profile is not None:
+                y_test_pred_residual = model.predict(X_test_scaled)
+                # Восстанавливаем абсолютные значения для тестовых данных
+                test_doys = df_prepared.loc[valid_indices, 'dayofyear'].iloc[split_idx:]
+                clim_means = test_doys.apply(
+                    lambda doy: self._get_climatology_value(target_column, doy, 'mean')
+                ).values
+                y_test_abs_pred = y_test_pred_residual + clim_means
+                y_test_abs_actual = df_prepared.loc[valid_indices, target_column].iloc[split_idx:].values
+                
+                # R² для абсолютных значений
+                # Проверка на наличие аномальных значений (Inf/NaN) перед расчетом
+                mask = np.isfinite(y_test_abs_actual) & np.isfinite(y_test_abs_pred)
+                if mask.any():
+                    y_act = y_test_abs_actual[mask]
+                    y_pre = y_test_abs_pred[mask]
+                    
+                    ss_res = np.sum((y_act - y_pre) ** 2)
+                    ss_tot = np.sum((y_act - np.mean(y_act)) ** 2)
+                    score = 1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 0.0
+                    
+                    # Ограничиваем экстремально отрицательные значения для корректного отображения
+                    if score < -1e6:
+                        st.warning(f"⚠️ Внимание: Модель показывает крайне низкую точность (R²={score:.2e}). Возможно, в данных присутствуют аномалии или недостаточно исторических примеров.")
+                        score = max(score, -999.999)
+                else:
+                    score = 0.0
+                
+                st.info(f"📈 R² на резидуалах: {residual_score:.3f} | R² для абсолютных значений: {score:.3f}")
+            else:
+                score = residual_score
             
             # Сохраняем модель и преобразователи
             self.models[target_column] = model
@@ -287,12 +476,11 @@ class TimeSeriesPredictor:
             raise ValueError(f"Ошибка обучения модели: {str(e)}")
     
     def predict_for_next_year(self, df, target_column, date_column):
-        """Сделать прогноз на следующий год"""
+        """Сделать прогноз на следующий год с использованием климатологии + XGBoost"""
         
         try:
             # Проверяем, обучена ли модель
             if target_column not in self.models:
-                # Обучаем модель
                 score = self.train_model(df, target_column, date_column)
                 st.info(f"✅ Модель '{target_column}' обучена (R²={score:.3f})")
             
@@ -304,8 +492,6 @@ class TimeSeriesPredictor:
             
             # Последняя дата в данных
             last_date = df_prepared[date_column].max()
-            
-            # Определяем следующий год
             next_year = last_date.year + 1
             
             # Создаем даты для следующего года
@@ -313,61 +499,84 @@ class TimeSeriesPredictor:
             end_date = pd.Timestamp(f"{next_year}-12-31")
             future_dates = pd.date_range(start=start_date, end=end_date, freq='D')
             
-            # Получаем исторические значения
-            historical_values = df_prepared[target_column].values if target_column in df_prepared.columns else []
+            # Получаем историю резидуалов для лагов
+            has_climatology = target_column in self.climatology
+            if has_climatology and '_residual' in df_prepared.columns:
+                residual_history = list(df_prepared['_residual'].dropna().values)
+            else:
+                residual_history = list(df_prepared[target_column].dropna().values)
             
             # Прогнозируем
             predictions = []
+            predicted_residuals = []
             
             for i, forecast_date in enumerate(future_dates):
                 # Создаем признаки для этой даты
                 features = self._create_features_for_date(
                     forecast_date, 
                     target_column, 
-                    historical_values, 
-                    predictions
+                    residual_history, 
+                    predicted_residuals
                 )
                 
                 # Преобразуем в DataFrame с правильными именами признаков
                 features_df = pd.DataFrame([features])
                 
-                # Убедимся, что все признаки есть и в правильном порядке
                 expected_features = self.feature_names.get(target_column, [])
                 if not expected_features:
-                    # Если нет сохраненных имен, создаем из features
                     expected_features = list(features.keys())
                 
-                # Добавляем недостающие признаки
                 for feat in expected_features:
                     if feat not in features_df.columns:
                         features_df[feat] = 0
                 
-                # Упорядочиваем признаки
                 features_df = features_df[expected_features]
                 
-                # Обработка пропущенных значений
+                # Обработка и предсказание
                 features_imputed = self.imputers[target_column].transform(features_df)
-                
-                # Масштабирование
                 features_scaled = self.scalers[target_column].transform(features_imputed)
+                predicted_residual = self.models[target_column].predict(features_scaled)[0]
                 
-                # Предсказание
-                prediction = self.models[target_column].predict(features_scaled)[0]
+                if np.isnan(float(predicted_residual)):
+                    predicted_residual = 0.0
+                
+                # Восстанавливаем абсолютное значение
+                doy = forecast_date.dayofyear
+                if has_climatology:
+                    clim_mean = self._get_climatology_value(target_column, doy, 'mean')
+                    prediction = clim_mean + predicted_residual
+                else:
+                    clim_mean = 0
+                    prediction = predicted_residual
+                
                 predictions.append(prediction)
+                predicted_residuals.append(predicted_residual)
             
-            # Формируем результат
+            # Формируем результат с климатологической информацией
             daily_predictions = []
             for i, (date, value) in enumerate(zip(future_dates, predictions)):
-                daily_predictions.append({
+                doy = date.dayofyear
+                pred_entry = {
                     'date': date,
                     'value': float(value),
                     'formatted_date': date.strftime('%d.%m.%Y'),
-                    'day_of_year': date.dayofyear,
+                    'day_of_year': doy,
                     'month': date.month,
                     'month_name': date.strftime('%B'),
                     'day_name': date.strftime('%A'),
                     'week_number': date.isocalendar()[1]
-                })
+                }
+                
+                # Добавляем климатологические данные
+                if has_climatology:
+                    pred_entry['clim_mean'] = float(self._get_climatology_value(target_column, doy, 'mean'))
+                    pred_entry['clim_q10'] = float(self._get_climatology_value(target_column, doy, 'q10'))
+                    pred_entry['clim_q90'] = float(self._get_climatology_value(target_column, doy, 'q90'))
+                    pred_entry['clim_min'] = float(self._get_climatology_value(target_column, doy, 'min'))
+                    pred_entry['clim_max'] = float(self._get_climatology_value(target_column, doy, 'max'))
+                    pred_entry['deviation'] = float(value - pred_entry['clim_mean'])
+                
+                daily_predictions.append(pred_entry)
             
             # Анализ по месяцам
             monthly_stats = {}
@@ -410,6 +619,7 @@ class TimeSeriesPredictor:
                 key_dates = {}
             
             # Историческая статистика
+            historical_values = df_prepared[target_column].dropna().values
             historical_stats = {
                 'last_date': last_date.strftime('%d.%m.%Y'),
                 'last_value': float(historical_values[-1]) if len(historical_values) > 0 else None,
@@ -438,45 +648,52 @@ class TimeSeriesPredictor:
         except Exception as e:
             raise ValueError(f"Ошибка прогноза на следующий год: {str(e)}")
     
-    def _create_features_for_date(self, date, target_column, historical_values, predicted_values):
-        """Создать признаки для конкретной даты"""
+    def _create_features_for_date(self, date, target_column, residual_history, predicted_residuals):
+        """Создать признаки для конкретной даты (согласованно с train_model).
         
-        # Базовые временные признаки
+        residual_history: список исторических резидуалов (или значений если нет климатологии)
+        predicted_residuals: список уже предсказанных резидуалов
+        """
+        
+        # Нормализованный год
+        yr = self.year_range.get(target_column, {'min': date.year, 'max': date.year})
+        year_min, year_max = yr['min'], yr['max']
+        if year_max > year_min:
+            year_normalized = (date.year - year_min) / (year_max - year_min)
+        else:
+            year_normalized = 0.5
+        
+        # Базовые временные признаки (точно как в prepare_time_features)
         features = {
-            'year': date.year,
             'month': date.month,
-            'day': date.day,
-            'dayofweek': date.dayofweek,
             'dayofyear': date.dayofyear,
-            'week': date.isocalendar()[1],
-            'quarter': (date.month - 1) // 3 + 1,
-            'is_weekend': 1 if date.dayofweek in [5, 6] else 0,
+            'dayofweek': date.dayofweek,
             'month_sin': np.sin(2 * np.pi * date.month / 12),
             'month_cos': np.cos(2 * np.pi * date.month / 12),
             'day_sin': np.sin(2 * np.pi * date.day / 31),
             'day_cos': np.cos(2 * np.pi * date.day / 31),
+            'year_normalized': year_normalized,
         }
         
-        # Объединяем исторические и предсказанные значения
-        all_values = list(historical_values) + predicted_values
-        total_len = len(all_values)
+        # Объединяем историю резидуалов и предсказанные
+        all_residuals = list(residual_history) + predicted_residuals
+        total_len = len(all_residuals)
         
-        # Добавляем лаговые признаки
-        for lag in [1, 7, 30, 90, 365]:
-            lag_key = f'{target_column}_lag_{lag}'
+        # Лаги на резидуалах (согласованный набор)
+        for lag in self.LAG_DAYS:
+            lag_key = f'residual_lag_{lag}'
             if total_len >= lag:
-                features[lag_key] = all_values[-lag]
+                features[lag_key] = all_residuals[-lag]
             else:
-                # Используем последнее доступное значение
-                features[lag_key] = all_values[-1] if all_values else 0
+                features[lag_key] = all_residuals[-1] if all_residuals else 0
         
-        # Скользящие средние
-        for window in [7, 30, 90, 365]:
-            ma_key = f'{target_column}_ma_{window}'
+        # Скользящие средние на резидуалах
+        for window in self.MA_WINDOWS:
+            ma_key = f'residual_ma_{window}'
             if total_len >= window:
-                features[ma_key] = float(np.mean(all_values[-window:]))
+                features[ma_key] = float(np.mean(all_residuals[-window:]))
             else:
-                features[ma_key] = float(np.mean(all_values)) if all_values else 0
+                features[ma_key] = float(np.mean(all_residuals)) if all_residuals else 0
         
         # Добавляем фиктивные признаки, которые могли быть при обучении
         for col in self.feature_names.get(target_column, []):
@@ -776,7 +993,7 @@ class TimeSeriesPredictor:
             raise ValueError(f"Ошибка создания отчета: {str(e)}")
     
     def create_visual_forecast(self, df, target_column, date_column):
-        """Создать визуализацию прогноза"""
+        """Создать визуализацию прогноза с климатологическим профилем"""
         
         try:
             forecast_result = self.predict_for_next_year(df, target_column, date_column)
@@ -785,21 +1002,48 @@ class TimeSeriesPredictor:
                 return None
             
             # Подготавливаем данные для графика
-            forecast_dates = [pred['date'] for pred in forecast_result['daily_predictions']]
-            forecast_values = [pred['value'] for pred in forecast_result['daily_predictions']]
+            predictions = forecast_result['daily_predictions']
+            forecast_dates = [pred['date'] for pred in predictions]
+            forecast_values = [pred['value'] for pred in predictions]
             
             # Создаем график
             fig = go.Figure()
             
-            # Прогноз
+            # Добавляем климатологический диапазон (q10-q90) если доступен
+            has_climatology = 'clim_mean' in predictions[0]
+            if has_climatology:
+                clim_q10 = [pred.get('clim_q10', pred['value']) for pred in predictions]
+                clim_q90 = [pred.get('clim_q90', pred['value']) for pred in predictions]
+                clim_mean = [pred.get('clim_mean', pred['value']) for pred in predictions]
+                
+                # Полоса исторического диапазона (q10-q90)
+                fig.add_trace(go.Scatter(
+                    x=forecast_dates + forecast_dates[::-1],
+                    y=clim_q90 + clim_q10[::-1],
+                    fill='toself',
+                    fillcolor='rgba(100, 149, 237, 0.15)',
+                    line=dict(color='rgba(100, 149, 237, 0)'),
+                    name='Ист. диапазон (10-90%)',
+                    hoverinfo='skip',
+                    showlegend=True
+                ))
+                
+                # Линия климатологического среднего
+                fig.add_trace(go.Scatter(
+                    x=forecast_dates,
+                    y=clim_mean,
+                    mode='lines',
+                    name='Ист. среднее',
+                    line=dict(color='rgba(100, 149, 237, 0.6)', width=2, dash='dot'),
+                ))
+            
+            # Прогноз — главная линия
             fig.add_trace(go.Scatter(
                 x=forecast_dates,
                 y=forecast_values,
                 mode='lines',
                 name='Прогноз',
-                line=dict(color='red', width=3, shape='spline'),
-                fill='tozeroy',
-                fillcolor='rgba(255, 0, 0, 0.1)'
+                line=dict(color='#E53935', width=3, shape='spline'),
             ))
             
             # Добавляем маркеры для ключевых дат
@@ -811,7 +1055,7 @@ class TimeSeriesPredictor:
                     y=[max_info['value']],
                     mode='markers+text',
                     name='Максимум',
-                    marker=dict(size=15, color='red'),
+                    marker=dict(size=14, color='red', symbol='triangle-up'),
                     text=[f"Макс: {max_info['value']:.1f}"],
                     textposition="top center"
                 ))
@@ -823,7 +1067,7 @@ class TimeSeriesPredictor:
                     y=[min_info['value']],
                     mode='markers+text',
                     name='Минимум',
-                    marker=dict(size=15, color='blue'),
+                    marker=dict(size=14, color='blue', symbol='triangle-down'),
                     text=[f"Мин: {min_info['value']:.1f}"],
                     textposition="bottom center"
                 ))
@@ -844,8 +1088,9 @@ class TimeSeriesPredictor:
                                 annotation_position="top right")
             
             # Настройка графика
+            clim_note = " (с историческим профилем)" if has_climatology else ""
             fig.update_layout(
-                title=f'Прогноз {target_column} на {forecast_result["year"]} год',
+                title=f'Прогноз {target_column} на {forecast_result["year"]} год{clim_note}',
                 xaxis_title='Дата',
                 yaxis_title=target_column,
                 hovermode='x unified',
@@ -1041,7 +1286,7 @@ class RiverDataPredictor(TimeSeriesPredictor):
         return report
     
     def predict_for_water_season(self, df, target_column, date_column, year=None):
-        """Прогноз только на сезон открытой воды (май-октябрь)"""
+        """Прогноз только на сезон открытой воды (май-октябрь) с климатологией"""
         
         try:
             # Подготавливаем данные
@@ -1058,10 +1303,9 @@ class RiverDataPredictor(TimeSeriesPredictor):
                 forecast_year = year
             
             # Создаем даты только для периода открытой воды
-            start_date = pd.Timestamp(f"{forecast_year}-05-01")  # 1 мая
-            end_date = pd.Timestamp(f"{forecast_year}-10-31")    # 31 октября
+            start_date = pd.Timestamp(f"{forecast_year}-05-01")
+            end_date = pd.Timestamp(f"{forecast_year}-10-31")
             
-            # Если это текущий год и мы уже после 31 октября, прогнозируем на следующий год
             current_date = pd.Timestamp.now()
             if forecast_year == current_date.year and current_date > end_date:
                 forecast_year += 1
@@ -1070,118 +1314,106 @@ class RiverDataPredictor(TimeSeriesPredictor):
             
             future_dates = pd.date_range(start=start_date, end=end_date, freq='D')
             
-            # Фильтруем исторические данные только по сезону открытой воды
-            historical_data = df_prepared[
-                df_prepared[date_column].dt.month.isin(self.open_water_months)
-            ].copy()
-            
-            if historical_data.empty:
-                raise ValueError(f"Нет исторических данных для месяцев {self.open_water_months}")
-            
-            # Проверяем качество данных
-            if len(historical_data) < 30:
-                st.warning(f"⚠️ Мало исторических данных: {len(historical_data)} записей. Рекомендуется минимум 30.")
-            
-            # Обучаем модель если еще не обучена
+            # Обучаем модель если еще не обучена (на всех данных, не только сезонных)
             if target_column not in self.models:
-                st.info(f"🔄 Обучаю модель на данных за {len(self.open_water_months)} месяцев сезона...")
-                
-                # Создаем дополнительные сезонные признаки
-                historical_data = self._add_seasonal_features(historical_data, date_column)
-                
-                score = self.train_model(historical_data, target_column, date_column)
+                st.info(f"🔄 Обучаю модель с климатологическим профилем...")
+                score = self.train_model(df, target_column, date_column)
                 if score is None:
                     score = 0.0
-                
-                st.success(f"✅ Модель обучена на сезонных данных (R²={score:.3f})")
+                st.success(f"✅ Модель обучена (R²={score:.3f})")
             
-            # Получаем исторические значения
-            historical_values = historical_data[target_column].values
+            # Получаем историю резидуалов
+            has_climatology = target_column in self.climatology
+            if has_climatology and '_residual' in df_prepared.columns:
+                residual_history = list(df_prepared['_residual'].dropna().values)
+            else:
+                residual_history = list(df_prepared[target_column].dropna().values)
             
             # Прогнозируем
             predictions = []
-            historical_values_list = list(historical_values)
+            predicted_residuals = []
             
             for i, forecast_date in enumerate(future_dates):
-                # Пропускаем даты вне сезона открытой воды (на всякий случай)
                 if forecast_date.month not in self.open_water_months:
                     continue
                 
-                # Создаем признаки для этой даты с учетом сезонности
-                features = self._create_features_for_water_season_date(
+                # Используем согласованный метод создания признаков
+                features = self._create_features_for_date(
                     forecast_date, 
                     target_column, 
-                    historical_values_list, 
-                    predictions
+                    residual_history, 
+                    predicted_residuals
                 )
                 
-                # Преобразуем в DataFrame с правильными именами признаков
                 features_df = pd.DataFrame([features])
-                
-                # Убедимся, что все признаки есть и в правильном порядке
                 expected_features = self.feature_names.get(target_column, [])
                 if not expected_features:
-                    # Если нет сохраненных имен, создаем из features
                     expected_features = list(features.keys())
                 
-                # Добавляем недостающие признаки
                 for feat in expected_features:
                     if feat not in features_df.columns:
                         features_df[feat] = 0
                 
-                # Упорядочиваем признаки
                 features_df = features_df[expected_features]
                 
                 try:
-                    # Обработка пропущенных значений
-                    if target_column in self.imputers:
-                        features_imputed = self.imputers[target_column].transform(features_df)
-                    else:
-                        features_imputed = features_df.values
+                    features_imputed = self.imputers[target_column].transform(features_df)
+                    features_scaled = self.scalers[target_column].transform(features_imputed)
+                    predicted_residual = self.models[target_column].predict(features_scaled)[0]
                     
-                    # Масштабирование
-                    if target_column in self.scalers:
-                        features_scaled = self.scalers[target_column].transform(features_imputed)
-                    else:
-                        features_scaled = features_imputed
+                    if np.isnan(float(predicted_residual)):
+                        raise ValueError("Прогноз вернул NaN")
                     
-                    # Предсказание
-                    if target_column in self.models:
-                        prediction = self.models[target_column].predict(features_scaled)[0]
+                    # Восстанавливаем абсолютное значение
+                    doy = forecast_date.dayofyear
+                    if has_climatology:
+                        clim_mean = self._get_climatology_value(target_column, doy, 'mean')
+                        prediction = clim_mean + predicted_residual
                     else:
-                        # Используем среднее историческое значение
-                        prediction = np.mean(historical_values_list) if historical_values_list else 0
+                        prediction = predicted_residual
                     
                     predictions.append(prediction)
-                    
-                    # Добавляем предсказание в историю для следующих прогнозов
-                    historical_values_list.append(prediction)
+                    predicted_residuals.append(predicted_residual)
                     
                 except Exception as e:
-                    # Если возникла ошибка, используем среднее значение
-                    if historical_values_list:
-                        prediction = np.mean(historical_values_list[-30:]) if len(historical_values_list) >= 30 else np.mean(historical_values_list)
+                    # Fallback — используем климатологию
+                    doy = forecast_date.dayofyear
+                    if has_climatology:
+                        prediction = self._get_climatology_value(target_column, doy, 'mean')
+                    elif residual_history:
+                        prediction = float(np.mean(residual_history[-30:]))
                     else:
                         prediction = 0
                     predictions.append(prediction)
-                    historical_values_list.append(prediction)
+                    predicted_residuals.append(0)
             
-            # Формируем результат
+            # Формируем результат с климатологическими данными
             daily_predictions = []
             for i, (date, value) in enumerate(zip(future_dates, predictions)):
-                daily_predictions.append({
+                doy = date.dayofyear
+                pred_entry = {
                     'date': date,
                     'value': float(value),
                     'formatted_date': date.strftime('%d.%m.%Y'),
-                    'day_of_year': date.dayofyear,
+                    'day_of_year': doy,
                     'month': date.month,
                     'month_name': date.strftime('%B'),
                     'day_name': date.strftime('%A'),
                     'week_number': date.isocalendar()[1],
-                    'season': 'open_water'  # Маркер сезона открытой воды
-                })
+                    'season': 'open_water'
+                }
+                
+                if has_climatology:
+                    pred_entry['clim_mean'] = float(self._get_climatology_value(target_column, doy, 'mean'))
+                    pred_entry['clim_q10'] = float(self._get_climatology_value(target_column, doy, 'q10'))
+                    pred_entry['clim_q90'] = float(self._get_climatology_value(target_column, doy, 'q90'))
+                    pred_entry['clim_min'] = float(self._get_climatology_value(target_column, doy, 'min'))
+                    pred_entry['clim_max'] = float(self._get_climatology_value(target_column, doy, 'max'))
+                    pred_entry['deviation'] = float(value - pred_entry['clim_mean'])
+                
+                daily_predictions.append(pred_entry)
             
-            # Анализ по месяцам (только для сезона открытой воды)
+            # Анализ по месяцам
             monthly_stats = {}
             for pred in daily_predictions:
                 if pred['month'] in self.open_water_months:
@@ -1195,7 +1427,6 @@ class RiverDataPredictor(TimeSeriesPredictor):
                     monthly_stats[month_key]['values'].append(pred['value'])
                     monthly_stats[month_key]['dates'].append(pred['date'])
             
-            # Рассчитываем статистику по месяцам
             monthly_summary = {}
             for month, data in monthly_stats.items():
                 if data['values']:
@@ -1208,7 +1439,7 @@ class RiverDataPredictor(TimeSeriesPredictor):
                         'data_points': len(data['values'])
                     }
             
-            # Находим ключевые даты
+            # Ключевые даты
             if daily_predictions:
                 values = [p['value'] for p in daily_predictions]
                 max_idx = np.argmax(values)
@@ -1225,8 +1456,12 @@ class RiverDataPredictor(TimeSeriesPredictor):
             else:
                 key_dates = {}
             
-            # Историческая статистика (только для сезона открытой воды)
-            hist_open_water = historical_data[target_column]
+            # Фильтруем исторические данные для открытой воды
+            historical_data = df_prepared[
+                df_prepared[date_column].dt.month.isin(self.open_water_months)
+            ].copy()
+            
+            hist_open_water = historical_data[target_column] if not historical_data.empty else pd.Series(dtype=float)
             historical_stats = {
                 'last_date': last_date.strftime('%d.%m.%Y'),
                 'last_value': float(hist_open_water.iloc[-1]) if len(hist_open_water) > 0 else None,
@@ -1234,16 +1469,16 @@ class RiverDataPredictor(TimeSeriesPredictor):
                 'historical_std': float(hist_open_water.std()) if len(hist_open_water) > 1 else None,
                 'historical_min': float(hist_open_water.min()) if len(hist_open_water) > 0 else None,
                 'historical_max': float(hist_open_water.max()) if len(hist_open_water) > 0 else None,
-                'data_years': f"{historical_data[date_column].dt.year.min()}-{historical_data[date_column].dt.year.max()}",
+                'data_years': f"{df_prepared[date_column].dt.year.min()}-{df_prepared[date_column].dt.year.max()}",
                 'season_months': self.open_water_months,
                 'total_data_points': len(hist_open_water),
                 'data_quality': 'хорошая' if len(hist_open_water) >= 100 else 'удовлетворительная' if len(hist_open_water) >= 30 else 'низкая'
             }
             
-            # Анализ по периодам внутри сезона
+            # Анализ по периодам
             season_analysis = self._analyze_water_season(daily_predictions)
             
-            # Формируем итоговый вывод
+            # Вывод
             conclusion = self._generate_water_season_conclusion(
                 target_column, key_dates, monthly_summary, season_analysis, forecast_year
             )
@@ -1288,7 +1523,6 @@ class RiverDataPredictor(TimeSeriesPredictor):
     def _get_hydro_season(self, date):
         """Определить гидрологический сезон для даты"""
         month = date.month
-        date.day
         
         if month == 5:  # Май - весенний паводок
             return 1

@@ -6,7 +6,7 @@ def format_number(num):
     """Форматировать число для отображения"""
     if isinstance(num, (int, np.integer)):
         return f"{num:,}".replace(",", " ")
-    elif isinstance(num, (float, np.float)):
+    elif isinstance(num, (float, np.floating)):
         return f"{num:,.2f}".replace(",", " ").replace(".", ",")
     return str(num)
 

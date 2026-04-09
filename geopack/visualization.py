@@ -189,7 +189,7 @@ class Visualizer:
         for i, col in enumerate(columns):
             if col in df.columns and pd.api.types.is_numeric_dtype(df[col]):
                 data = df[col].dropna()
-                if len(data) > 1:
+                if len(data) > 1 and data.nunique() > 1:
                     # ИСПРАВЛЕНО: используем numpy для KDE вместо seaborn
                     from scipy.stats import gaussian_kde
                     kde = gaussian_kde(data)
@@ -685,7 +685,7 @@ class Visualizer:
         
         # Создаем уникальный идентификатор для каждой строки
         gdf = gdf.copy()
-        gdf['feature_id'] = range(len(gdf))
+        gdf['feature_id'] = gdf.index.astype(str)
         
         folium.Choropleth(
             geo_data=gdf.__geo_interface__,

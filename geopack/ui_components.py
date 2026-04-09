@@ -77,66 +77,148 @@ def setup_app():
     # Автоматическая предзагрузка паводков
     auto_load_data()
     
-    # CSS стили с улучшенными подсказками
+    # CSS стили с премиальным дизайном (ориентировано на config.toml)
     st.markdown("""
         <style>
-        .main {
-            padding: 0rem 1rem;
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        
+        html, body, [class*="css"] {
+            font-family: 'Inter', sans-serif;
         }
+        
+        /* Основной контент */
+        .main {
+            padding: 1.5rem 2rem;
+            background-color: transparent;
+        }
+        
+        /* Кнопки */
         .stButton > button {
             width: 100%;
-            background-color: #4CAF50;
+            background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
             color: white;
-            font-weight: bold;
+            font-weight: 600;
+            border-radius: 8px;
+            border: none;
+            padding: 0.5rem 1rem;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.2);
         }
-        .metric-card {
-            background-color: #f0f2f6;
-            padding: 15px;
-            border-radius: 10px;
-            border-left: 5px solid #4CAF50;
-            margin: 10px 0;
-        }
-        .plot-container {
-            background-color: white;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            margin: 10px 0;
+        .stButton > button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 8px -1px rgba(37, 99, 235, 0.4);
+            border-color: #3B82F6;
+            color: white;
         }
         
-        /* Улучшенные подсказки Plotly */
+        /* Метрики (Metrics) */
+        [data-testid="stMetric"] {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 20px 15px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s ease, border-color 0.2s;
+            border-left: 4px solid #3B82F6;
+        }
+        [data-testid="stMetric"]:hover {
+            transform: translateY(-2px);
+            border-color: rgba(59, 130, 246, 0.5);
+            border-left: 4px solid #60A5FA;
+        }
+        
+        /* Контейнеры для графиков и таблиц */
+        .plot-container {
+            background-color: rgba(30, 41, 59, 0.5);
+            padding: 24px;
+            border-radius: 16px;
+            box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
+            margin: 16px 0;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        
+        /* Вкладки (Tabs) */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 8px;
+            background-color: transparent;
+        }
+        .stTabs [data-baseweb="tab"] {
+            padding: 10px 20px;
+            border-radius: 8px 8px 0 0;
+            background-color: rgba(30, 41, 59, 0.3);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-bottom: none;
+            transition: background-color 0.2s;
+        }
+        .stTabs [aria-selected="true"] {
+            background-color: #1E293B !important;
+            border-top: 3px solid #3B82F6 !important;
+            color: #F8FAFC !important;
+        }
+        
+        /* Подсказки Plotly */
         .hoverlayer {
-            background-color: rgba(255, 255, 255, 0.95) !important;
+            background-color: rgba(30, 41, 59, 0.95) !important;
             border-radius: 8px !important;
-            border: 1px solid #ccc !important;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
+            border: 1px solid rgba(255,255,255,0.1) !important;
+            box-shadow: 0 10px 25px -5px rgba(0,0,0,0.5) !important;
         }
         .hovertext {
-            font-family: Arial, sans-serif !important;
-            font-size: 12px !important;
-            color: #333 !important;
-            background-color: white !important;
-            padding: 8px !important;
-            border-radius: 4px !important;
-            border: 1px solid #ddd !important;
-        }
-        .ytooltip {
-            background-color: white !important;
-            color: #333 !important;
-            border: 1px solid #ccc !important;
-            border-radius: 4px !important;
-            padding: 8px !important;
+            font-family: 'Inter', sans-serif !important;
+            font-size: 13px !important;
+            padding: 10px !important;
         }
         
-        /* Настройка для темной темы */
         .js-plotly-plot .plotly .modebar {
             background-color: transparent !important;
         }
+        
+        /* Стилизация радио-кнопок (меню навигации) */
+        [data-testid="stRadio"] > div {
+            gap: 10px !important;
+        }
+        [data-testid="stRadio"] label {
+            background-color: rgba(30, 41, 59, 0.4) !important;
+            padding: 12px 18px !important;
+            border-radius: 12px !important;
+            border: 1px solid rgba(255, 255, 255, 0.05) !important;
+            cursor: pointer !important;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+            width: 100%;
+            margin: 0 !important;
+            display: flex;
+            align-items: center;
+        }
+        [data-testid="stRadio"] label:hover {
+            background-color: rgba(59, 130, 246, 0.15) !important;
+            border-color: rgba(59, 130, 246, 0.4) !important;
+            transform: translateX(4px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+        /* Скрываем стандартные кружки радио-кнопок */
+        [data-testid="stRadio"] label span[data-baseweb="radio"] {
+            display: none !important;
+        }
+        /* Для новых версий Streamlit скрываем div-кружок */
+        [data-testid="stRadio"] label > div:first-child:has(> div) {
+            display: none !important;
+        }
+        /* Активный пункт меню */
+        [data-testid="stRadio"] label:has(input:checked) {
+            background: linear-gradient(90deg, rgba(59,130,246,0.3) 0%, rgba(30,41,59,0.5) 100%) !important;
+            border-left: 4px solid #60A5FA !important;
+            border-radius: 4px 12px 12px 4px !important;
+            border-color: rgba(59, 130, 246, 0.4) !important;
+        }
+        [data-testid="stRadio"] label:has(input:checked) p {
+            font-weight: 700 !important;
+            color: #93C5FD !important;
+            letter-spacing: 0.3px;
+        }
         </style>
     """, unsafe_allow_html=True)
-    
-    st.title(" Анализатор данных с расширенной геоаналитикой")
-    st.markdown("---")
+
 
 def render_sidebar():
     """Рендер сайдбара"""
@@ -149,285 +231,223 @@ def render_sidebar():
         st.session_state.predictor = RiverDataPredictor()
     
     with st.sidebar:
-        st.header("⚙️ Настройки")
+        st.markdown("<h2 style='text-align: center; color: #60A5FA; margin-bottom: 20px;'>Аналитика</h2>", unsafe_allow_html=True)
         
-        # Загрузка файлов из папки
-        st.subheader("📁 Загрузка данных")
-        files = st.session_state.analyzer.get_data_files()
+        # Определяем доступные страницы меню
+        has_coords = st.session_state.get('has_coords', False)
+        has_data = ('current_df' in st.session_state) or ('special_coords_df' in st.session_state)
         
-        if files:
-            selected_file = st.selectbox(
-                "Выберите файл из папки 'data':",
-                [f.name for f in files],
+        st.markdown("### 🧭 Навигация")
+        menu_options = ["🏠 Главная"]
+        if has_data:
+            menu_options.extend(["📊 Данные", "📈 Аналитика", "⚡ Дашборд"])
+        if has_coords:
+            menu_options.append("🗺️ Карта")
+            
+        page = st.radio("Меню", menu_options, label_visibility="collapsed")
+        st.session_state['current_page'] = page
+        
+        st.markdown("---")
+        
+        # Блок загрузки и настроек убираем в expander для компактности
+        with st.expander("⚙️ Настройки и Данные", expanded=(page=="🏠 Главная" or not has_data)):
+            # Загрузка файлов из папки
+            st.subheader("📁 Загрузка данных")
+            files = st.session_state.analyzer.get_data_files()
+            
+            if files:
+                selected_file = st.selectbox(
+                    "Файл из папки 'data':",
+                    [f.name for f in files],
+                    index=0
+                )
+                
+                if st.button("📥 Загрузить файл", type="primary"):
+                    load_file_from_folder(selected_file)
+            
+            # Загрузка файла через интерфейс
+            uploaded_file = st.file_uploader(
+                "Загрузите свой:",
+                type=['csv', 'xlsx', 'xls', 'parquet', 'json', 'geojson', 'shp']
+            )
+            
+            if uploaded_file is not None:
+                load_uploaded_file(uploaded_file)
+            
+            st.markdown("---")
+            st.subheader("🎨 Настройки графиков")
+            
+            # Настройки темы
+            theme_options = ['plotly_dark', 'plotly_white', 'ggplot2', 'seaborn', 'simple_white']
+            selected_theme = st.selectbox(
+                "Тема оформления",
+                theme_options,
                 index=0
             )
             
-            if st.button("📥 Загрузить выбранный файл", type="primary"):
-                load_file_from_folder(selected_file)
-        
-        # Загрузка файла через интерфейс
-        st.subheader("Или загрузите файл:")
-        uploaded_file = st.file_uploader(
-            "Выберите файл",
-            type=['csv', 'xlsx', 'xls', 'parquet', 'json', 'geojson', 'shp'],
-            help="Поддерживаются CSV, Excel, Parquet, JSON, GeoJSON, Shapefile"
-        )
-        
-        if uploaded_file is not None:
-            load_uploaded_file(uploaded_file)
-        
-        # Настройки темы визуализации
-        st.markdown("---")
-        st.subheader("🎨 Настройки визуализации")
-        
-        # Настройки темы
-        theme_options = ['plotly_white', 'plotly_dark', 'ggplot2', 'seaborn', 'simple_white']
-        selected_theme = st.selectbox(
-            "Тема оформления",
-            theme_options,
-            index=0
-        )
-        
-        if st.button("🎨 Применить тему"):
-            st.session_state.visualizer.theme = selected_theme
-            st.success(f"Тема '{selected_theme}' применена")
-        
-        # Настройки подсказок
-        st.markdown("---")
-        st.subheader("💡 Настройки подсказок")
-        
-        hover_bg_color = st.color_picker("Цвет фона подсказки", "#FFFFFF")
-        hover_text_color = st.color_picker("Цвет текста подсказки", "#000000")
-        hover_font_size = st.slider("Размер шрифта подсказки", 8, 16, 12)
-        
-        if st.button("💡 Применить настройки подсказок"):
-            # Обновляем настройки визуализатора
-            st.session_state.visualizer.default_config['hoverlabel'] = {
-                'bgcolor': hover_bg_color,
-                'font_size': hover_font_size,
-                'font_color': hover_text_color
-            }
-            st.success("Настройки подсказок применены")
-        
-        # Гео-инструменты
-        st.markdown("---")
-        st.subheader("🗺️ Геоинструменты")
-        
-        if st.session_state.get('has_coords', False):
-            st.success("✅ Геоданные доступны")
-            
-            crs_options = {
-                "WGS84 (широта/долгота)": "EPSG:4326",
-                "Меркатор (веб-карты)": "EPSG:3857",
-                "Пулково 1942": "EPSG:4284",
-                "СК-42": "EPSG:4282"
-            }
-            
-            selected_crs = st.selectbox(
-                "Система координат",
-                list(crs_options.keys())
-            )
-            
-            if st.button("🔄 Применить систему координат"):
-                if 'current_gdf' in st.session_state:
-                    st.session_state['current_gdf'] = st.session_state['current_gdf'].to_crs(crs_options[selected_crs])
-                    st.success(f"Применена система: {selected_crs}")
-        
-        st.markdown("---")
-        st.caption("🌍 Поддерживаются: CSV, Excel, GeoJSON, Shapefiles")
-        
+            if st.button("🎨 Применить тему"):
+                st.session_state.visualizer.theme = selected_theme
+                st.success(f"Тема '{selected_theme}' применена")
+                
+            # Гео-инструменты
+            if st.session_state.get('has_coords', False):
+                st.markdown("---")
+                st.subheader("🗺️ CRS Геоинструменты")
+                
+                crs_options = {
+                    "WGS84 (широта/долгота)": "EPSG:4326",
+                    "Меркатор (веб-карты)": "EPSG:3857",
+                    "Пулково 1942": "EPSG:4284",
+                    "СК-42": "EPSG:4282"
+                }
+                
+                selected_crs = st.selectbox(
+                    "Система координат",
+                    list(crs_options.keys())
+                )
+                
+                if st.button("🔄 Применить CRS"):
+                    if 'current_gdf' in st.session_state:
+                        st.session_state['current_gdf'] = st.session_state['current_gdf'].to_crs(crs_options[selected_crs])
+                        st.success(f"CRS обновлена!")
+                        
         # Информация о загруженных данных
         if 'current_file' in st.session_state:
-            st.markdown("---")
-            has_coords = st.session_state.get('has_coords', False)
             data_type = "🌍 Геоданные" if has_coords else "📊 Обычные данные"
             
-            st.info(f"""
-            **Загружен файл:** {st.session_state['current_file']}
-            
-            **Тип данных:** {data_type}
-            
-            **Координаты:** {'✅ Доступны' if has_coords else '❌ Не обнаружены'}
-            
-            **Время загрузки:** {datetime.now().strftime('%H:%M:%S')}
-            """)
+            file_name = st.session_state['current_file']
+            st.markdown(f"""
+            <div style="background: rgba(30,41,59,0.5); padding: 15px; border-radius: 10px; border-left: 4px solid #3B82F6; margin-top: 20px;">
+                <p style="font-size: 12px; color: #cbd5e1; margin-bottom: 5px;">Текущий файл:</p>
+                <p style="font-weight: 600; font-size: 14px; margin-bottom: 10px; word-break: break-all;">{file_name}</p>
+                <p style="font-size: 12px; color: #34D399; margin: 0;">{data_type}</p>
+            </div>
+            """, unsafe_allow_html=True)
 
 def render_main_content():
     """Рендер основного контента"""
-    # Проверяем наличие любых данных
     has_any_data = (
         'current_gdf' in st.session_state or 
         'current_df' in st.session_state or 
         'special_coords_df' in st.session_state
     )
     
-    if not has_any_data:
+    page = st.session_state.get('current_page', "🏠 Главная")
+    
+    if page == "🏠 Главная" or not has_any_data:
         render_start_page()
+    elif page == "📊 Данные":
+        render_data_section()
+    elif page == "📈 Аналитика":
+        render_analytics_section()
+    elif page == "🗺️ Карта":
+        render_map_section()
+    elif page == "⚡ Дашборд":
+        show_dashboard()
     else:
-        render_data_tabs()
+        render_start_page()
 
 def render_start_page():
     """Стартовая страница"""
-    st.info("👈 Загрузите данные через сайдбар или положите файлы в папку 'data/'")
+    st.markdown("<h1 style='text-align: center; color: #3B82F6; margin-bottom: 0.5rem; font-weight: 700;'>Анализатор данных</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #94A3B8; margin-bottom: 2rem; font-size: 1.1rem;'>С расширенной геоаналитикой и машинным обучением</p>", unsafe_allow_html=True)
+    
+    st.markdown("""
+        <div style="background: rgba(37,99,235,0.1); border: 1px solid rgba(59,130,246,0.3); padding: 15px; border-radius: 10px; margin-bottom: 2rem; text-align: center;">
+            <span style="font-size: 1.1rem; color: #E2E8F0;">👋 Добро пожаловать! Разверните панель ⚙️ слева, чтобы <b>выбрать файл</b> или <b>загрузить свои данные</b>.</span>
+        </div>
+    """, unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.markdown("### 📁 Поддерживаемые форматы")
         st.markdown("""
-        - **CSV/Excel** с координатами
-        - **GeoJSON** - стандарт геоданных
-        - **Shapefile** - ESRI формат
-        - **Parquet** - быстрый бинарный
-        - **JSON** - структурированный
-        """)
+        <div style='background: rgba(30,41,59,0.5); padding: 25px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.05); height: 100%; transition: transform 0.2s;'>
+        <h3 style='color: #60A5FA; display: flex; align-items: center; gap: 10px;'>📁 Форматы</h3>
+        <hr style='border-color: rgba(255,255,255,0.1);'>
+        <ul style='color: #cbd5e1; line-height: 1.8; font-size: 15px;'>
+            <li><b>CSV / Excel</b> с координатами</li>
+            <li><b>GeoJSON / Shapefile</b></li>
+            <li><b>Parquet / JSON</b></li>
+        </ul>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col2:
-        st.markdown("### 📊 Анализ данных")
         st.markdown("""
-        - Статистический анализ
-        - Пространственный анализ
-        - Кластеризация
-        - Визуализация
-        """)
+        <div style='background: rgba(30,41,59,0.5); padding: 25px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.05); height: 100%; transition: transform 0.2s;'>
+        <h3 style='color: #34D399; display: flex; align-items: center; gap: 10px;'>📊 Анализ данных</h3>
+        <hr style='border-color: rgba(255,255,255,0.1);'>
+        <ul style='color: #cbd5e1; line-height: 1.8; font-size: 15px;'>
+            <li>Статистический обзор и очистка</li>
+            <li>Интерактивная визуализация (Plotly)</li>
+            <li>XGBoost предиктивный анализ</li>
+        </ul>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col3:
-        st.markdown("### 🗺️ Геоаналитика")
         st.markdown("""
-        - Тепловые карты
-        - Буферные зоны
-        - Диаграмма Вороного
-        - Пространственные запросы
-        """)
-    
-    # Пример геоданных
-    st.markdown("### Пример геоданных (GeoJSON)")
-    sample_geojson = {
-        "type": "FeatureCollection",
-        "features": [
-            {
-                "type": "Feature",
-                "properties": {"name": "Москва", "population": 12615},
-                "geometry": {"type": "Point", "coordinates": [37.6173, 55.7558]}
-            },
-            {
-                "type": "Feature",
-                "properties": {"name": "СПб", "population": 5384},
-                "geometry": {"type": "Point", "coordinates": [30.3351, 59.9343]}
-            }
-        ]
-    }
-    st.json(sample_geojson, expanded=False)
+        <div style='background: rgba(30,41,59,0.5); padding: 25px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.05); height: 100%; transition: transform 0.2s;'>
+        <h3 style='color: #F87171; display: flex; align-items: center; gap: 10px;'>🗺️ Геоаналитика</h3>
+        <hr style='border-color: rgba(255,255,255,0.1);'>
+        <ul style='color: #cbd5e1; line-height: 1.8; font-size: 15px;'>
+            <li>Тепловые карты и буферы</li>
+            <li>Интерактивные карты Folium</li>
+            <li>Пространственные запросы</li>
+        </ul>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    st.markdown("<br><br>", unsafe_allow_html=True)
 
-def render_data_tabs():
-    """Рендер вкладок с данными"""
-    st.session_state.get('current_file', 'Файл')
-    has_coords = st.session_state.get('has_coords', False)
+def render_data_section():
+    """Секция данных: Обзор и Корректировка"""
+    st.markdown("<h2 style='color: #F8FAFC; margin-bottom: 20px;'>Данные</h2>", unsafe_allow_html=True)
     has_special_coords = st.session_state.get('has_special_coords', False)
     
-    # Определяем тип данных
-    if has_coords and 'current_gdf' in st.session_state:
-        pass
-    elif has_special_coords and 'special_coords_df' in st.session_state:
-        pass
-    else:
-        pass
+    tabs = ["📋 Обзор данных", "🛠️ Корректировка типов"]
+    if has_special_coords:
+        tabs.append("📍 Специальные координаты")
+        
+    t = st.tabs(tabs)
+    with t[0]: show_data_overview()
+    with t[1]: show_data_type_correction()
+    if has_special_coords:
+        with t[2]: show_special_coordinates()
+
+def render_analytics_section():
+    """Секция аналитики: Графики и ML"""
+    st.markdown("<h2 style='color: #F8FAFC; margin-bottom: 20px;'>Аналитика и Прогнозирование</h2>", unsafe_allow_html=True)
+    tabs = ["📊 Визуализация"]
     
-    # Создаем вкладки
-    tabs = ["📋 Обзор данных", "🛠️ Корректировка типов", "📊 Визуализация"]
-    
-    # Проверяем, есть ли временные данные для предсказаний
     has_time_data = False
-    df = None
-    
-    if 'current_df' in st.session_state:
-        df = st.session_state['current_df']
-    elif 'special_coords_df' in st.session_state:
-        df = st.session_state['special_coords_df']
+    df = st.session_state.get('current_df')
+    if df is None: df = st.session_state.get('special_coords_df')
     
     if df is not None and not df.empty:
-        # Проверяем наличие дат
-        date_cols = []
+        # Check standard datetime
         for col in df.columns:
             if pd.api.types.is_datetime64_any_dtype(df[col]):
-                date_cols.append(col)
+                has_time_data = True
+                break
+                
+    if has_time_data:
+        tabs.extend(["🔮 ML Предсказания (XGBoost)", "🌊 Пороговый анализ"])
         
-        has_time_data = len(date_cols) > 0
-    
-    # Добавляем вкладку предсказаний если есть временные данные
+    t = st.tabs(tabs)
+    with t[0]: show_visualization()
     if has_time_data:
-        tabs.append("🔮 Предсказания")
-    
-    if has_time_data:
-        tabs.append("🌊 Пороговый анализ")
-    
-    # Добавляем карту и русские карты только если есть геоданные
-    if has_coords:
-        tabs.extend(["🗺️ Карта", "🌍 Геоаналитика", "📈 Дашборд"])
-    elif has_special_coords:
-        tabs.extend(["📍 Специальные координаты", "📈 Дашборд"])
-    else:
-        tabs.extend(["📈 Дашборд"])
+        with t[1]: show_predictions()
+        with t[2]: show_threshold_analysis()
 
-    tab_objects = st.tabs(tabs)
-    
-    # Вкладка 1: Обзор данных
-    with tab_objects[0]:
-        show_data_overview()
-
-    # Вкладка 2: Корректировка типов
-    with tab_objects[1]:
-        show_data_type_correction()
-
-    # Вкладка 3: Визуализация
-    with tab_objects[2]:
-        show_visualization()
-
-    # Определяем текущий индекс
-    current_tab_index = 3  # После трех базовых вкладок
-
-    # Вкладка: Предсказания (если есть временные данные)
-    if has_time_data:
-        if current_tab_index < len(tab_objects):
-            with tab_objects[current_tab_index]:
-                show_predictions()
-            current_tab_index += 1
-
-    # Вкладка: Пороговый анализ (если есть временные данные)
-    if has_time_data:
-        if current_tab_index < len(tab_objects):
-            with tab_objects[current_tab_index]:
-                show_threshold_analysis()
-            current_tab_index += 1
-
-    # Вкладка: Специальные координаты
-    if has_special_coords:
-        if current_tab_index < len(tab_objects):
-            with tab_objects[current_tab_index]:
-                show_special_coordinates()
-            current_tab_index += 1
-
-    # Вкладка: Карта (только для геоданных)
-    if has_coords:
-        map_tab_index = tabs.index("🗺️ Карта") if "🗺️ Карта" in tabs else current_tab_index
-        if map_tab_index < len(tab_objects):
-            with tab_objects[map_tab_index]:
-                show_map_view()
-            current_tab_index += 1
-
-    # Вкладка: Геоаналитика (только для геоданных)
-    if has_coords:
-        geo_tab_index = tabs.index("🌍 Геоаналитика") if "🌍 Геоаналитика" in tabs else current_tab_index
-        if geo_tab_index < len(tab_objects):
-            with tab_objects[geo_tab_index]:
-                show_geo_analysis()
-            current_tab_index += 1
-
-    # Вкладка: Дашборд (последняя всегда)
-    dashboard_tab_index = tabs.index("📈 Дашборд") if "📈 Дашборд" in tabs else current_tab_index
-    if dashboard_tab_index < len(tab_objects):
-        with tab_objects[dashboard_tab_index]:
-            show_dashboard()
+def render_map_section():
+    """Секция геоаналитики"""
+    st.markdown("<h2 style='color: #F8FAFC; margin-bottom: 20px;'>Карта и Геоаналитика</h2>", unsafe_allow_html=True)
+    tabs = ["🗺️ Карта Data", "🌍 Геоаналитика Tool"]
+    t = st.tabs(tabs)
+    with t[0]: show_map_view()
+    with t[1]: show_geo_analysis()
 
 def load_file_from_folder(selected_file):
     """Загрузить файл из папки"""
@@ -929,8 +949,8 @@ def show_threshold_analysis():
                 # Сохраняем отчет в session_state
                 st.session_state.threshold_report = report
                 
-                # Отображаем результаты
-                display_threshold_results(report, water_column)
+                # Перезапускаем Streamlit, чтобы отобразить отчет из блока ниже (избегаем дублирования ключей виджетов)
+                st.rerun()
                 
             except Exception as e:
                 st.error(f"Ошибка анализа: {str(e)}")
