@@ -8,6 +8,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     build-essential \
     libgomp1 \
+    supervisor \
     && rm -rf /var/lib/apt/lists/*
 
 # Копируем файл зависимостей
@@ -15,12 +16,17 @@ COPY requirements.txt .
 
 # Устанавливаем зависимости
 RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir flask
 
 # Копируем исходный код проекта
 COPY . .
 
-# Открываем порт для Streamlit
-EXPOSE 8501
+# Supervisor конфигурация для запуска обоих серверов
+RUN mkdir -p /etc/supervisor/conf.d
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Команда для запуска приложения
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# Открываем порты для Streamlit и Flask API
+EXPOSE 8501 8502
+
+# Команда для запуска supervisord
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

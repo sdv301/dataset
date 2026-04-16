@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pid
+flake8_report*.txt
+.streamlit/
+data/*.xlsx
+data/*.xls
