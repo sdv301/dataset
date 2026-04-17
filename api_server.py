@@ -39,9 +39,27 @@ def api_water_stats():
         {'name': 'Яна', 'level': 150, 'norm': 160}
     ]
     rivers = real_data if real_data else fallback_rivers
+    
+    # Фронтенд ожидает ключи 'river' вместо 'name'
+    formatted_rivers = []
+    for r in rivers:
+        formatted_rivers.append({
+            'river': r.get('name', r.get('river', 'Неизвестно')),
+            'level': r.get('level', 0),
+            'norm': r.get('norm', 0)
+        })
+
+    # Добавляем данные для графика прогноза
+    forecast = {
+        'months': ['Май', 'Июнь', 'Июль', 'Август', 'Сентябрь'],
+        'actual': [180, 420, 320, 0, 0],
+        'forecast': [200, 400, 300, 260, 180]
+    }
+
     return jsonify({
         'current_level': 'Норма',
-        'rivers': rivers,
+        'rivers': formatted_rivers,
+        'forecast': forecast,
         'is_fallback': not real_data
     })
 
