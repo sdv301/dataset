@@ -238,7 +238,7 @@ def render_sidebar():
         has_data = ('current_df' in st.session_state) or ('special_coords_df' in st.session_state)
         
         st.markdown("### 🧭 Навигация")
-        menu_options = ["🏠 Главная"]
+        menu_options = ["🏠 Главная", "🌊 Уровни воды"]
         if has_data:
             menu_options.extend(["📊 Данные", "📈 Аналитика", "⚡ Дашборд"])
         if has_coords:
@@ -334,7 +334,10 @@ def render_main_content():
     
     page = st.session_state.get('current_page', "🏠 Главная")
     
-    if page == "🏠 Главная" or not has_any_data:
+    if page == "🌊 Уровни воды":
+        from .ui.water_forecast_page import render_water_forecast_page
+        render_water_forecast_page()
+    elif page == "🏠 Главная" or not has_any_data:
         render_start_page()
     elif page == "📊 Данные":
         render_data_section()

@@ -1,4 +1,4 @@
 [server]
-baseUrlPath = "flood"
 enableCORS = false
 enableXsrfProtection = false
+baseUrlPath = "/flood/v1"

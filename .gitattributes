@@ -1,0 +1,2 @@
+Реки/*.csv filter=lfs diff=lfs merge=lfs -text
+Реки/*.db filter=lfs diff=lfs merge=lfs -text
