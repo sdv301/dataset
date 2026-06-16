@@ -4,5 +4,20 @@ __pycache__/
 *.pid
 flake8_report*.txt
 .streamlit/
-data/*.xlsx
-data/*.xls
+.git/
+.gitattributes
+
+# Runtime data — mounted as volumes in docker-compose
+data/
+Реки/
+*.db
+*.sqlite
+*.sqlite3
+*.csv
+*.xlsx
+*.xls
+geopack/
+geo_data/
+reports/
+temp/
+validated_output/
