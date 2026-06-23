@@ -80,10 +80,8 @@ def setup_app():
     # CSS стили с премиальным дизайном (ориентировано на config.toml)
     st.markdown("""
         <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-        
         html, body, [class*="css"] {
-            font-family: 'Inter', sans-serif;
+            font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
         }
         
         /* Основной контент */
