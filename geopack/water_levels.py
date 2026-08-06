@@ -8,7 +8,9 @@ import psycopg2
 import os
 
 def get_db_connection():
-    db_url = os.environ.get('DATASET_DATABASE_URL', os.environ.get('DATABASE_URL', 'postgresql://portal_user:admin135@postgres:5432/portal_db'))
+    db_url = os.environ.get('DATASET_DATABASE_URL') or os.environ.get('DATABASE_URL')
+    if not db_url:
+        raise RuntimeError('DATASET_DATABASE_URL or DATABASE_URL must be set')
     conn = psycopg2.connect(db_url)
     conn.autocommit = True
     with conn.cursor() as cur:

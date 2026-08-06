@@ -30,7 +30,9 @@ BASE_DIR = Path(__file__).parent
 DB_PATH = BASE_DIR / 'hydro_meteo.db'
 def get_db_connection():
     import os
-    db_url = os.environ.get('DATASET_DATABASE_URL', os.environ.get('DATABASE_URL', 'postgresql://portal_user:admin135@localhost:5432/portal_db'))
+    db_url = os.environ.get('DATASET_DATABASE_URL') or os.environ.get('DATABASE_URL')
+    if not db_url:
+        raise RuntimeError('DATASET_DATABASE_URL or DATABASE_URL must be set')
     conn = psycopg2.connect(db_url)
     conn.autocommit = True
     with conn.cursor() as cur:
