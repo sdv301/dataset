@@ -4,19 +4,7 @@
 from __future__ import annotations
 
 import os
-import psycopg2
-import os
-
-def get_db_connection():
-    db_url = os.environ.get('DATASET_DATABASE_URL') or os.environ.get('DATABASE_URL')
-    if not db_url:
-        raise RuntimeError('DATASET_DATABASE_URL or DATABASE_URL must be set')
-    conn = psycopg2.connect(db_url)
-    conn.autocommit = True
-    with conn.cursor() as cur:
-        cur.execute("CREATE SCHEMA IF NOT EXISTS dataset_schema"
-        cur.execute("SET search_path TO dataset_schema"
-    return conn
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -130,15 +118,21 @@ def discover_sources() -> list[WaterDataSource]:
     return found
 
 
+def _connect_sqlite(db_path: Path) -> sqlite3.Connection:
+    """Подключение к локальному SQLite-файлу."""
+    conn = sqlite3.connect(str(db_path))
+    return conn
+
+
 def _sqlite_has_table(db_path: Path, table: str = SQLITE_TABLE) -> bool:
     try:
-        with get_db_connection()) as conn:
+        with _connect_sqlite(db_path) as conn:
             row = conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=%s",
-                (table,,
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (table,),
             ).fetchone()
             return row is not None
-    except psycopg2.Error:
+    except sqlite3.Error:
         return False
 
 
@@ -213,7 +207,7 @@ def _load_sqlite(db_path: Path) -> pd.DataFrame:
             level AS [{COL_LEVEL}]
         FROM {SQLITE_TABLE}
     """
-    with get_db_connection()) as conn:
+    with _connect_sqlite(db_path) as conn:
         df = pd.read_sql_query(sql, conn)
     df[COL_DATE] = pd.to_datetime(df[COL_DATE], errors="coerce", dayfirst=True)
     df[COL_LEVEL] = pd.to_numeric(df[COL_LEVEL], errors="coerce")
@@ -235,18 +229,18 @@ def build_sqlite_from_csv(
     df = load_water_levels_table(csv_p, kind="csv")
     db_p.parent.mkdir(parents=True, exist_ok=True)
 
-    with get_db_connection()) as conn:
+    with _connect_sqlite(db_p) as conn:
         if replace:
-            conn.execute(f"DROP TABLE IF EXISTS {SQLITE_TABLE}"
+            conn.execute(f"DROP TABLE IF EXISTS {SQLITE_TABLE}")
         conn.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {SQLITE_TABLE} (
-                id SERIAL PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 river TEXT NOT NULL,
                 post TEXT,
                 observation_date TEXT NOT NULL,
                 level REAL,
-                UNIQUE(river, post, observation_date
+                UNIQUE(river, post, observation_date)
             )
             """
         )
@@ -262,7 +256,7 @@ def build_sqlite_from_csv(
         conn.executemany(
             f"""
             INSERT INTO {SQLITE_TABLE}
-            (river, post, observation_date, level
+            (river, post, observation_date, level)
             VALUES (?, ?, ?, ?)
             """,
             rows,

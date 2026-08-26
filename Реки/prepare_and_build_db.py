@@ -12,7 +12,7 @@
   Список метеостанций.xlsx - справочник метеостанций
 """
 
-import psycopg2
+import sqlite3
 import csv
 import os
 import sys
@@ -29,18 +29,8 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent
 DB_PATH = BASE_DIR / 'hydro_meteo.db'
 def get_db_connection():
-    import os
-    db_url = os.environ.get('DATASET_DATABASE_URL') or os.environ.get('DATABASE_URL')
-    if not db_url:
-        raise RuntimeError('DATASET_DATABASE_URL or DATABASE_URL must be set')
-    conn = psycopg2.connect(db_url)
-    conn.autocommit = True
-    with conn.cursor() as cur:
-        cur.execute("CREATE SCHEMA IF NOT EXISTS dataset_schema"
-        cur.execute("SET search_path TO dataset_schema")
-    # For executing large inserts we want to control transaction if possible, or rely on autocommit. 
-    # But executemany without transaction might be slow.
-    # We will just disable autocommit in the caller.
+    """Подключение к локальной SQLite-базе hydro_meteo.db."""
+    conn = sqlite3.connect(str(DB_PATH))
     return conn
 
 HYDRO_SRC_DIR = BASE_DIR / "Гидропосты"
@@ -56,7 +46,7 @@ BATCH_SIZE = 5000
 
 
 # Фикс вывода для консоли Windows
-if sys.stdout.encoding and sys.stdout.encoding.lower( != 'utf-8':
+if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
     try:
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     except Exception:
@@ -389,18 +379,18 @@ def load_meteo_station_mapping():
 # --- Гидропосты: импорт ---
 
 def get_or_create_river(cursor, river_name):
-    cursor.execute("SELECT id FROM rivers WHERE name = %s", (river_name,)
+    cursor.execute("SELECT id FROM rivers WHERE name = ?", (river_name,))
     row = cursor.fetchone()
     if row:
         return row[0]
-    cursor.execute("INSERT INTO rivers (name VALUES (?)", (river_name,))
+    cursor.execute("INSERT INTO rivers (name) VALUES (?)", (river_name,))
     return cursor.lastrowid
 
 
 def get_or_create_hydro_station(cursor, gidro_num, identifier, river_id):
     cursor.execute(
-        "SELECT id FROM hydro_stations WHERE gidro_num = %s AND identifier = %s",
-        (gidro_num, identifier
+        "SELECT id FROM hydro_stations WHERE gidro_num = ? AND identifier = ?",
+        (gidro_num, identifier)
     )
     row = cursor.fetchone()
     if row:
@@ -547,8 +537,8 @@ def get_or_create_meteo_station(cursor, station_identifier, station_name, name_l
         return cache[station_identifier]
 
     cursor.execute(
-        "SELECT id FROM meteo_stations WHERE station_identifier = %s",
-        (station_identifier,
+        "SELECT id FROM meteo_stations WHERE station_identifier = ?",
+        (station_identifier,)
     )
     row = cursor.fetchone()
     if row:
@@ -556,7 +546,7 @@ def get_or_create_meteo_station(cursor, station_identifier, station_name, name_l
         return row[0]
 
     cursor.execute(
-        "INSERT INTO meteo_stations (station_identifier, station_name, name_long VALUES (?, ?, ?)",
+        "INSERT INTO meteo_stations (station_identifier, station_name, name_long) VALUES (?, ?, ?)",
         (station_identifier, station_name, name_long)
     )
     sid = cursor.lastrowid
@@ -799,7 +789,7 @@ def print_summary(conn):
             JOIN hydro_stations s ON t.station_id = s.id
             JOIN rivers r ON s.river_id = r.id
             ORDER BY t.dt DESC LIMIT 5
-        """
+        """)
         for row in cursor.fetchall():
             print("    Пост %d (%s) | %s | %s C | %s" % row)
 
@@ -812,7 +802,7 @@ def print_summary(conn):
             FROM meteo_observations o
             JOIN meteo_stations s ON o.station_id = s.id
             ORDER BY o.observation_date DESC LIMIT 5
-        """
+        """)
         for row in cursor.fetchall():
             print("    Ст. %d (%s) | %s | t=%s C | v=%s м/с" % row)
 
@@ -854,11 +844,10 @@ def main():
         print("  [*] Старая БД удалена")
 
     conn = get_db_connection()
-    conn.autocommit = False
-    conn.execute("PRAGMA journal_mode = WAL"
-    conn.execute("PRAGMA synchronous = NORMAL"
-    conn.execute("PRAGMA cache_size = -64000"
-    conn.execute("PRAGMA encoding = 'UTF-8'"
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA cache_size = -64000")
+    conn.execute("PRAGMA encoding = 'UTF-8'")
 
     try:
         create_database(conn)
