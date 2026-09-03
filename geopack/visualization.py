@@ -591,8 +591,8 @@ class Visualizer:
     # ==================== ГЕОПРОСТРАНСТВЕННАЯ ВИЗУАЛИЗАЦИЯ ====================
     
     def create_base_map(self, center_lat=None, center_lon=None, 
-                       gdf=None, tiles="OpenStreetMap", zoom_start=10,
-                       height=500, width=800, attribution=None):
+                       gdf=None, tiles="/maps/tiles/satellite/{z}/{x}/{y}", zoom_start=10,
+                       height=500, width=800, attribution=" "):
         """Создать улучшенную базовую карту"""
         if gdf is not None and not gdf.empty:
             center_lat = gdf.geometry.y.mean()
@@ -608,6 +608,9 @@ class Visualizer:
             height=f"{height}px",
             width=f"{width}px",
             attr=attribution
+        )
+        m.get_root().header.add_child(
+            folium.Element("<style>.leaflet-control-attribution{display:none!important}</style>")
         )
         
         # Добавляем полезные плагины

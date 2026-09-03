@@ -14,6 +14,22 @@ import time
 import random
 import folium
 
+PORTAL_SAT_TILES = "/maps/tiles/satellite/{z}/{x}/{y}"
+_HIDE_ATTR_CSS = "<style>.leaflet-control-attribution{display:none!important}</style>"
+
+
+def portal_sat_map(location, zoom_start=5, **kwargs):
+    kwargs.setdefault("control_scale", True)
+    m = folium.Map(
+        location=location,
+        zoom_start=zoom_start,
+        tiles=PORTAL_SAT_TILES,
+        attr=" ",
+        **kwargs,
+    )
+    m.get_root().header.add_child(folium.Element(_HIDE_ATTR_CSS))
+    return m
+
 def auto_load_data():
     """Автоматическая загрузка данных паводков при старте"""
     if 'auto_loaded' not in st.session_state:
@@ -1719,25 +1735,7 @@ def show_map_view():
     col1, col2 = st.columns(2)
     
     with col1:
-        # Выбор типа карты - включаем русские карты
-        map_types = {
-            "OpenStreetMap": "OpenStreetMap",
-            "Карты 2ГИС": "2gis", 
-            "Яндекс.Карты (схема)": "yandex_map",
-            "Яндекс.Карты (спутник)": "yandex_sat",
-            "Google Maps (схема)": "google_map",
-            "Google Maps (спутник)": "google_sat",
-            "Stamen Terrain": "Stamen Terrain",
-            "CartoDB positron": "CartoDB positron"
-        }
-        
-        map_type_display = list(map_types.keys())
-        selected_map = st.selectbox(
-            "Тип карты",
-            map_type_display,
-            key="map_type_select"
-        )
-        map_types[selected_map]
+        st.caption("Подложка: офлайн-спутник Якутии")
         
         # Выбор колонки для цвета
         color_options = ["Нет (синий)"] + df.columns.tolist()
@@ -1801,101 +1799,13 @@ def show_map_view():
         if st.session_state.get('optimize_russia', True) and avg_lat > 50:
             zoom_start = max(zoom_start, 4)
         
-        # Управление офлайн/онлайн режимом
-        map_bg_mode = st.radio(
-            "Режим отображения карты:",
-            ["Онлайн (С подложкой OSM/Яндекс)", "Офлайн (Только геометрия, без интернета)"],
-            horizontal=True
-        )
-        
-        base_tiles = 'OpenStreetMap' if map_bg_mode.startswith("Онлайн") else None
-
-        # Создаем базовую карту
-        m = folium.Map(
+        # Офлайн-спутник Якутии (локальный кэш портала)
+        m = portal_sat_map(
             location=[avg_lat, avg_lon],
             zoom_start=zoom_start,
-            tiles=base_tiles,  # Базовый слой
-            control_scale=True,
             width='100%',
             height=600,
         )
-        
-        # Добавляем различные типы карт как слои
-        # Яндекс.Карты
-        yandex_map_tiles = 'https://vec01.maps.yandex.net/tiles?l=map&x={x}&y={y}&z={z}'
-        yandex_sat_tiles = 'https://vec01.maps.yandex.net/tiles?l=sat&x={x}&y={y}&z={z}'
-        
-        # 2ГИС
-        dgis_tiles = 'https://tile2.maps.2gis.com/tiles?x={x}&y={y}&z={z}'
-        
-        # Google Maps
-        google_map_tiles = 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}'
-        google_sat_tiles = 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}'
-        
-        if base_tiles is not None:
-            # Добавляем слои карт
-            folium.TileLayer(
-                tiles='OpenStreetMap',
-                name='OpenStreetMap',
-                attr='© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-                control=True
-            ).add_to(m)
-            
-            # Яндекс.Карты (схема)
-            folium.TileLayer(
-                tiles=yandex_map_tiles,
-                name='Яндекс.Карты (схема)',
-                attr='© <a href="https://yandex.ru/maps/">Яндекс.Карты</a>',
-                control=True
-            ).add_to(m)
-            
-            # Яндекс.Карты (спутник)
-            folium.TileLayer(
-                tiles=yandex_sat_tiles,
-                name='Яндекс.Карты (спутник)',
-                attr='© <a href="https://yandex.ru/maps/">Яндекс.Карты</a>',
-                control=True
-            ).add_to(m)
-            
-            # 2ГИС
-            folium.TileLayer(
-                tiles=dgis_tiles,
-                name='Карты 2ГИС',
-                attr='© <a href="https://2gis.ru">2ГИС</a>',
-                control=True
-            ).add_to(m)
-            
-            # Google Maps (схема)
-            folium.TileLayer(
-                tiles=google_map_tiles,
-                name='Google Maps (схема)',
-                attr='© <a href="https://google.com/maps">Google Maps</a>',
-                control=True
-            ).add_to(m)
-            
-            # Google Maps (спутник)
-            folium.TileLayer(
-                tiles=google_sat_tiles,
-                name='Google Maps (спутник)',
-                attr='© <a href="https://google.com/maps">Google Maps</a>',
-                control=True
-            ).add_to(m)
-            
-            # Stamen Terrain
-            folium.TileLayer(
-                tiles='https://stamen-tiles.a.ssl.fastly.net/terrain/{z}/{x}/{y}.jpg',
-                name='Stamen Terrain',
-                attr='Map tiles by <a href="http://stamen.com">Stamen Design</a>, under <a href="http://creativecommons.org/licenses/by/3.0">CC BY 3.0</a>. Data by <a href="http://openstreetmap.org">OpenStreetMap</a>, under <a href="http://www.openstreetmap.org/copyright">ODbL</a>.',
-                control=True
-            ).add_to(m)
-            
-            # CartoDB positron
-            folium.TileLayer(
-                tiles='https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-                name='CartoDB Positron',
-                attr='© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-                control=True
-            ).add_to(m)
         
         # Добавляем маркеры
         if len(gdf) > 0:
@@ -2138,36 +2048,10 @@ def show_combined_map(gdf, df):
     avg_lat = gdf.geometry.y.mean() if hasattr(gdf.geometry, 'y') else 62
     avg_lon = gdf.geometry.x.mean() if hasattr(gdf.geometry, 'x') else 129
     
-    m = folium.Map(
+    m = portal_sat_map(
         location=[avg_lat, avg_lon],
         zoom_start=5,
-        control_scale=True
-        
     )
-    
-    # Добавляем несколько слоев карт
-    # Яндекс.Карты
-    yandex_tiles = [
-        ('Яндекс.Карты (схема)', 'https://vec01.maps.yandex.net/tiles?l=map&x={x}&y={y}&z={z}', '© Яндекс.Карты'),
-        ('Яндекс.Карты (спутник)', 'https://vec01.maps.yandex.net/tiles?l=sat&x={x}&y={y}&z={z}', '© Яндекс.Карты'),
-        ('Яндекс.Карты (гибрид)', 'https://vec01.maps.yandex.net/tiles?l=skl&x={x}&y={y}&z={z}', '© Яндекс.Карты')
-    ]
-    
-    # 2ГИС
-    dgis_tiles = [
-        ('2ГИС (схема)', 'https://tile2.maps.2gis.com/tiles?x={x}&y={y}&z={z}', '© 2ГИС'),
-        ('2ГИС (спутник)', 'https://tile2.maps.2gis.com/tiles?x={x}&y={y}&z={z}&v=1', '© 2ГИС')
-    ]
-    
-    # Добавляем все слои
-    for name, tiles, attr in yandex_tiles + dgis_tiles:
-        folium.TileLayer(
-            tiles=tiles,
-            name=name,
-            attr=attr,
-            overlay=True,
-            control=True
-        ).add_to(m)
     
     # Добавляем маркеры
     for idx, row in gdf.iterrows():
@@ -2230,29 +2114,13 @@ def show_combined_map(gdf, df):
     st_folium(m, width=800, height=600)
 
 def show_yandex_map(gdf, df):
-    """Показать карту Яндекс"""
-    st.info("🟡 Яндекс.Карты - подробные карты России с актуальными данными")
-    
+    """Карта постов на офлайн-спутнике."""
+    st.info("Офлайн-спутник Якутии")
+
     avg_lat = gdf.geometry.y.mean() if hasattr(gdf.geometry, 'y') else 62
     avg_lon = gdf.geometry.x.mean() if hasattr(gdf.geometry, 'x') else 129
-    
-    # Яндекс.Карты URL
-    yandex_layers = {
-        'Схема': 'https://vec01.maps.yandex.net/tiles?l=map&x={x}&y={y}&z={z}',
-        'Спутник': 'https://vec01.maps.yandex.net/tiles?l=sat&x={x}&y={y}&z={z}',
-        'Гибрид': 'https://vec01.maps.yandex.net/tiles?l=skl&x={x}&y={y}&z={z}'
-    }
-    
-    selected_layer = st.selectbox("Выберите слой Яндекс.Карт", list(yandex_layers.keys()))
-    
-    m = folium.Map(
-        location=[avg_lat, avg_lon],
-        zoom_start=5,
-        tiles=yandex_layers[selected_layer],
-        attr='© Яндекс.Карты',
-        control_scale=True,
-        
-    )
+
+    m = portal_sat_map(location=[avg_lat, avg_lon], zoom_start=5)
     
     # Добавляем маркеры
     for idx, row in gdf.iterrows():
@@ -2285,23 +2153,13 @@ def show_yandex_map(gdf, df):
     st_folium(m, width=800, height=600)
 
 def show_dgis_map(gdf, df):
-    """Показать карту 2ГИС"""
-    st.info("🔵 2ГИС - подробная карта городов России с объектами инфраструктуры")
-    
+    """Карта постов на офлайн-спутнике."""
+    st.info("Офлайн-спутник Якутии")
+
     avg_lat = gdf.geometry.y.mean() if hasattr(gdf.geometry, 'y') else 62
     avg_lon = gdf.geometry.x.mean() if hasattr(gdf.geometry, 'x') else 129
-    
-    # 2ГИС URL
-    dgis_tiles = 'https://tile2.maps.2gis.com/tiles?x={x}&y={y}&z={z}'
-    
-    m = folium.Map(
-        location=[avg_lat, avg_lon],
-        zoom_start=5,
-        tiles=dgis_tiles,
-        attr='© 2ГИС',
-        control_scale=True,
-        
-    )
+
+    m = portal_sat_map(location=[avg_lat, avg_lon], zoom_start=5)
     
     # Группируем точки по рекам для лучшей визуализации
     if 'Река' in df.columns:
@@ -2352,80 +2210,28 @@ def show_dgis_map(gdf, df):
     st_folium(m, width=800, height=600)
 
 def show_map_comparison(gdf, df):
-    """Показать сравнение разных карт"""
-    st.info("🔍 Сравнение разных картографических сервисов")
-    
+    """Карта постов на офлайн-спутнике Якутии."""
+    st.info("Подложка — локальный спутник (Якутия)")
+
     avg_lat = gdf.geometry.y.mean() if hasattr(gdf.geometry, 'y') else 62
     avg_lon = gdf.geometry.x.mean() if hasattr(gdf.geometry, 'x') else 129
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("Яндекс.Карты")
-        m_yandex = folium.Map(
-            location=[avg_lat, avg_lon],
-            zoom_start=5,
-            tiles='https://vec01.maps.yandex.net/tiles?l=map&x={x}&y={y}&z={z}',
-            attr='© Яндекс.Карты',
-            width=400,
-            height=400,
-            
-        )
-        
-        # Добавляем несколько маркеров
-        for idx, row in gdf.head(20).iterrows():
-            try:
-                lat, lon = row.geometry.y, row.geometry.x
-                folium.CircleMarker(
-                    location=[lat, lon],
-                    radius=4,
-                    color='red',
-                    fill=True
-                ).add_to(m_yandex)
-            except Exception as e:
-                continue
-        
-        from streamlit_folium import folium_static
-        folium_static(m_yandex)
-    
-    with col2:
-        st.subheader("2ГИС")
-        m_dgis = folium.Map(
-            location=[avg_lat, avg_lon],
-            zoom_start=5,
-            tiles='https://tile2.maps.2gis.com/tiles?x={x}&y={y}&z={z}',
-            attr='© 2ГИС',
-            width=400,
-            height=400
-        )
-        
-        # Добавляем несколько маркеров
-        for idx, row in gdf.head(20).iterrows():
-            try:
-                lat, lon = row.geometry.y, row.geometry.x
-                folium.CircleMarker(
-                    location=[lat, lon],
-                    radius=4,
-                    color='blue',
-                    fill=True
-                ).add_to(m_dgis)
-            except Exception as e:
-                continue
-        
-        folium_static(m_dgis)
-    
-    # Таблица сравнения
-    st.subheader("📊 Сравнение картографических сервисов")
-    
-    comparison_data = {
-        'Сервис': ['Яндекс.Карты', '2ГИС', 'Google Maps', 'OpenStreetMap'],
-        'Покрытие России': ['Отличное', 'Хорошее (города)', 'Хорошее', 'Среднее'],
-        'Детализация': ['Высокая', 'Очень высокая (города)', 'Высокая', 'Зависит от региона'],
-        'Актуальность': ['Очень высокая', 'Высокая', 'Высокая', 'Переменная'],
-        'Бесплатный доступ': ['Да', 'Да', 'Ограниченный', 'Да']
-    }
-    
-    st.table(pd.DataFrame(comparison_data))
+
+    m = portal_sat_map(location=[avg_lat, avg_lon], zoom_start=5, width=800, height=500)
+
+    for idx, row in gdf.head(40).iterrows():
+        try:
+            lat, lon = row.geometry.y, row.geometry.x
+            folium.CircleMarker(
+                location=[lat, lon],
+                radius=4,
+                color='red',
+                fill=True
+            ).add_to(m)
+        except Exception:
+            continue
+
+    from streamlit_folium import folium_static
+    folium_static(m)
 
 def show_geo_analysis():
     """Показать вкладку геоанализа"""
@@ -2591,12 +2397,9 @@ def show_geo_analysis():
                 colors = ['red', 'blue', 'green', 'orange', 'purple', 'darkred', 
                          'lightblue', 'darkgreen', 'pink', 'gray']
                 
-                m = folium.Map(
+                m = portal_sat_map(
                     location=[result_df['Широта'].mean(), result_df['Долгота'].mean()],
                     zoom_start=5,
-                    tiles='OpenStreetMap',
-                    control_scale=True,
-                    
                 )
                 
                 for idx, row in result_df.iterrows():
@@ -2740,12 +2543,9 @@ def show_geo_analysis():
                 st.dataframe(results_df, use_container_width=True)
                 
                 # Создаем карту
-                m = folium.Map(
+                m = portal_sat_map(
                     location=[gdf.iloc[target_idx].geometry.y, gdf.iloc[target_idx].geometry.x],
                     zoom_start=7,
-                    tiles='OpenStreetMap',
-                    control_scale=True,
-                    
                 )
                 
                 # Добавляем целевую точку
